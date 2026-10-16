@@ -499,3 +499,5 @@ kbd{font:500 11px var(--font);background:var(--fill);border-radius:6px;padding:2
   .seg{grid-column:1/-1;grid-row:2;justify-self:start}
 }
 .pop-item{min-height:44px}
+
+html{background:var(--bg)}

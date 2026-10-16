@@ -7,7 +7,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v, (key, val) => (key === 'files' || key === '_mem' || key === '_artOpened' ? undefined : val))); } catch {} },
 };
 
-let settings = Object.assign({ theme: 'auto', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true }, store.get('smiri.settings', {}));
+let settings = Object.assign({ theme: 'dark', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true }, store.get('smiri.settings', {}));
 let chats = store.get('smiri.chats', []);
 let memories = store.get('smiri.memory', []);
 let projects = store.get('smiri.projects', []);
@@ -17,6 +17,7 @@ let current = null, busy = false, pending = [], abortCtl = null, researchNext = 
 const OK_MODELS = ['claude-sonnet-5-5', 'claude-haiku-5-5'];
 const pickModel = (m) => (OK_MODELS.includes(m) ? m : 'claude-sonnet-5-5');
 settings.model = pickModel(settings.model);
+if (!settings.themeSet) settings.theme = 'dark';   // ciemny domyślnie, dopóki użytkownik sam nie wybierze
 
 const DEFAULT_PERSONAS = [
   { id: 'smiri', icon: 'spark', name: 'Smiri', prompt: '', builtin: true },
@@ -340,37 +341,74 @@ async function exportPdf(row) {
 }
 
 /* ---------- głos i „Hey Smiri” ---------- */
+/* Jedna ciągła sesja rozpoznawania mowy obsługuje i hasło, i polecenie — bez przełączania mikrofonu,
+   które kończyło sesję i zamykało ekran. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let wake = null, wakeOn = false, cmdRec = null;
+const WAKE_RE = /(?:hej|hey|hi|hello|ok|okej|cześć|czesc)[\s,.!-]*(?:smiri|smiry|smyri|smirri|smyry|smire|smirii|siri|siry|smiri)/i;
+let rec = null, ignoreUntil = 0, wakeOn = false, vmode = 'off', cmdFrom = 0, cmdTimer = 0, idleTimer = 0, lastLen = 0, speaking = false, recStarting = false;
 function speak(text) {
   if (!('speechSynthesis' in window)) return;
   const t = text.replace(/```[\s\S]*?```/g, ' ').replace(/~~~artifact[\s\S]*?~~~/g, ' ').replace(/[#*_`>|$]/g, ' ').slice(0, 1200);
-  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.lang = settings.lang; speechSynthesis.speak(u);
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.lang = settings.lang;
+  u.onstart = () => { speaking = true; }; u.onend = u.onerror = () => { speaking = false; if (!$('#voice').hidden && !busy) setTimeout(() => { if (!speaking && !busy) closeVoice(); }, 1400); };
+  speechSynthesis.speak(u);
 }
-function listenOnce(onText, onPartial) {
-  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); return false; }
-  cmdRec = new SR(); cmdRec.lang = settings.lang; cmdRec.interimResults = true; let final = '';
-  cmdRec.onresult = (e) => { let t = ''; for (const r of e.results) { t += r[0].transcript; if (r.isFinal) final = t; } onPartial && onPartial(t); };
-  cmdRec.onend = () => { onText(final); cmdRec = null; }; cmdRec.start(); return true;
-}
-function openVoice() {
-  $('#voice').hidden = false; $('#voiceText').textContent = 'Słucham…';
-  if (wake) { wake.onend = null; try { wake.stop(); } catch {} }
-  const ok = listenOnce((t) => { if (t) { $('#voiceText').textContent = t; send(t); } else closeVoice(); }, (t) => { $('#voiceText').textContent = t; });
-  if (!ok) closeVoice();
-}
-function closeVoice() { $('#voice').hidden = true; if (cmdRec) try { cmdRec.abort(); } catch {} speechSynthesis.cancel(); if (wakeOn) startWake(); }
-function startWake() {
-  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); wakeOn = false; $('#wakeBtn').classList.remove('on'); return; }
-  wake = new SR(); wake.lang = settings.lang; wake.continuous = true; wake.interimResults = true;
-  wake.onresult = (e) => {
-    const t = [...e.results].slice(e.resultIndex).map((r) => r[0].transcript.toLowerCase()).join(' ');
-    if (/(hey|hej|hi|cześć|czesc)\s*(smiri|smiry|smyri|smirri|siri)/.test(t)) { wake.onend = null; try { wake.stop(); } catch {} openVoice(); }
+function voiceStatus(t) { $('#voiceText').textContent = t; }
+function startRec() {
+  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); wakeOn = false; $('#wakeBtn').classList.remove('on'); return false; }
+  if (rec || recStarting) return true;
+  const r = new SR(); r.lang = settings.lang; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1; lastLen = 0; ignoreUntil = 0;
+  r.onresult = (e) => {
+    lastLen = e.results.length;
+    if (speaking) return;                                     // nie słuchaj własnego głosu
+    if (vmode === 'wake') {
+      const from = Math.max(e.resultIndex, ignoreUntil);
+      const t = [...e.results].slice(from).map((x) => x[0].transcript).join(' ');
+      const m = t.match(WAKE_RE);
+      if (m) { vmode = 'cmd'; cmdFrom = e.results.length - 1; wakeCut = t.slice(m.index + m[0].length); showVoice(); onCmd(e); }
+    } else if (vmode === 'cmd') onCmd(e);
   };
-  wake.onend = () => { if (wakeOn && $('#voice').hidden) try { wake.start(); } catch {} };
-  try { wake.start(); } catch {}
+  r.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { toast('Zezwól przeglądarce na użycie mikrofonu'); wakeOn = false; $('#wakeBtn').classList.remove('on'); vmode = 'off'; closeVoice(); }
+  };
+  r.onend = () => { rec = null; recStarting = false; if (wakeOn || vmode === 'cmd') setTimeout(() => { if (wakeOn || vmode === 'cmd') startRec(); }, 300); };
+  try { r.start(); rec = r; } catch { setTimeout(() => (rec = null), 0); return false; }
+  return true;
 }
-function toggleWake() { wakeOn = !wakeOn; $('#wakeBtn').classList.toggle('on', wakeOn); if (wakeOn) startWake(); else if (wake) { wake.onend = null; try { wake.stop(); } catch {} } }
+let wakeCut = '';
+function cmdTextFrom(e) {
+  const parts = [...e.results].slice(cmdFrom).map((x) => x[0].transcript).join(' ');
+  let t = parts; if (wakeCut !== null && cmdFrom === e.results.length - 1 && WAKE_RE.test(parts)) t = parts.replace(/^.*?(?:hej|hey|hi|hello|ok|okej|cześć|czesc)[\s,.!-]*(?:smiri|smiry|smyri|smirri|smyry|smire|smirii|siri|siry)/i, '');
+  return t.replace(/^[\s,.!-]+/, '').trim();
+}
+function onCmd(e) {
+  const t = cmdTextFrom(e); clearTimeout(idleTimer);
+  voiceStatus(t || 'Słucham…');
+  clearTimeout(cmdTimer);
+  if (t) cmdTimer = setTimeout(() => submitVoice(t), 1700);      // koniec wypowiedzi po chwili ciszy
+  else idleTimer = setTimeout(() => { if (vmode === 'cmd' && !$('#voice').hidden) closeVoice(); }, 9000);
+}
+function submitVoice(t) {
+  clearTimeout(cmdTimer); if (vmode !== 'cmd') return;
+  vmode = wakeOn ? 'wake' : 'off'; ignoreUntil = lastLen; voiceStatus(t);
+  if (!wakeOn && rec) { try { rec.stop(); } catch {} }
+  send(t);
+}
+function showVoice() { $('#voice').hidden = false; voiceStatus('Słucham…'); clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (vmode === 'cmd' && !$('#voice').hidden) closeVoice(); }, 9000); }
+function openVoice() {                                          // przycisk mikrofonu
+  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); return; }
+  vmode = 'cmd'; wakeCut = null; cmdFrom = rec ? lastLen : 0; showVoice();
+  if (!rec) startRec();
+}
+function closeVoice() {
+  clearTimeout(cmdTimer); clearTimeout(idleTimer); $('#voice').hidden = true; speechSynthesis.cancel(); speaking = false;
+  vmode = wakeOn ? 'wake' : 'off'; if (!wakeOn && rec) { try { rec.stop(); } catch {} }
+}
+function toggleWake() {
+  wakeOn = !wakeOn; $('#wakeBtn').classList.toggle('on', wakeOn);
+  if (wakeOn) { vmode = 'wake'; if (startRec()) toast('Nasłuchuję. Powiedz: „Hey Smiri”'); }
+  else { vmode = 'off'; if (rec) { try { rec.stop(); } catch {} } }
+}
 
 /* ---------- persony ---------- */
 let editing = null, pickedIcon = 'bot';
@@ -440,7 +478,7 @@ function renderMemoryList() {
 }
 
 /* ---------- ustawienia ---------- */
-function applyTheme() { if (settings.theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = settings.theme; }
+function applyTheme() { if (settings.theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = settings.theme; const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = isDark() ? '#000000' : '#f5f5f7'; }
 function openSettings() {
   $('#theme').value = settings.theme; $('#model').value = settings.model; $('#password').value = settings.password; $('#lang').value = settings.lang; $('#speak').checked = settings.speak;
   $('#effort').value = settings.effort; $('#showThink').checked = settings.showThinking; $('#style').value = settings.style; $('#aboutMe').value = settings.aboutMe; $('#howRespond').value = settings.howRespond; $('#memOn').checked = settings.memoryOn;
@@ -448,7 +486,7 @@ function openSettings() {
 }
 $('#saveSettings').onclick = () => {
   settings = Object.assign(settings, { theme: $('#theme').value, model: pickModel($('#model').value), password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked, effort: $('#effort').value, showThinking: $('#showThink').checked, style: $('#style').value, aboutMe: $('#aboutMe').value, howRespond: $('#howRespond').value, memoryOn: $('#memOn').checked });
-  store.set('smiri.settings', settings); applyTheme();
+  settings.themeSet = true; store.set('smiri.settings', settings); applyTheme();
 };
 $('#clearAll').onclick = () => { if (confirm('Usunąć całą historię rozmów?')) { chats = []; persist(); $('#settings').close(); newChat(); } };
 $('#clearMem').onclick = () => { if (confirm('Wyczyścić całą pamięć?')) { memories = []; saveMemory(); renderMemoryList(); } };
@@ -464,7 +502,7 @@ function paletteActions() {
     { icon: 'grid', label: 'Narzędzia', fn: () => $('#launcher').showModal() }, { icon: 'folder', label: 'Projekty', fn: () => openProjects() },
     { icon: 'sliders', label: 'Ustawienia', fn: openSettings }, { icon: 'brain', label: 'Pamięć', fn: openSettings },
     { icon: 'globe', label: settings.search ? 'Wyłącz wyszukiwanie w sieci' : 'Włącz wyszukiwanie w sieci', fn: () => $('#searchBtn').click() },
-    { icon: 'moon', label: 'Zmień motyw (jasny / ciemny)', fn: () => { settings.theme = isDark() ? 'light' : 'dark'; store.set('smiri.settings', settings); applyTheme(); } },
+    { icon: 'moon', label: 'Zmień motyw (jasny / ciemny)', fn: () => { settings.theme = isDark() ? 'light' : 'dark'; settings.themeSet = true; store.set('smiri.settings', settings); applyTheme(); } },
   ];
   allPersonas().forEach((p) => A.push({ icon: pIcon(p), label: 'Persona: ' + p.name, fn: () => { $('#personaSel').value = p.id; newChat(); } }));
   TILES.forEach(([k, ic, label]) => A.push({ icon: ic, label: 'Narzędzie: ' + label, fn: () => openPanel(k) }));
