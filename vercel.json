@@ -1,6 +1,13 @@
 {
   "functions": {
-    "api/chat.js": { "maxDuration": 120 },
-    "api/stock.js": { "maxDuration": 15 }
+    "api/chat.js": {
+      "maxDuration": 120
+    },
+    "api/stock.js": {
+      "maxDuration": 15
+    },
+    "api/fx.js": {
+      "maxDuration": 20
+    }
   }
 }

@@ -39,18 +39,24 @@ Gdy pomaga to użytkownikowi, wstawiaj interaktywne widżety jako bloki kodu z D
 
 Tabele pisz w Markdown. Nie opisuj składni widżetów użytkownikowi, po prostu ich używaj, gdy pasują. Gdy masz dostęp do wyszukiwarki, używaj jej przy pytaniach o aktualne fakty i podawaj źródła. Do zdjęć, PDF-ów i plików od użytkownika odnoś się wprost. Nie używaj emoji.`;
 
-const TOOLS = [
-  ['[[chartbar]] Wykres', 'Narysuj wykres: '], ['[[flow]] Schemat', 'Narysuj schemat/diagram: '], ['[[timeline]] Oś czasu', 'Zrób oś czasu: '],
-  ['[[cards]] Fiszki', 'Zrób fiszki do nauki: '], ['[[slides]] Prezentacja', 'Zrób prezentację na temat: '], ['[[exchange]] Kurs walut', 'Przelicz walutę: 100 USD na PLN'],
-  ['[[lines]] Podsumuj', 'Podsumuj w punktach: '], ['[[translate]] Przetłumacz', 'Przetłumacz na angielski: '],
+const GRAD = {
+  blue: 'linear-gradient(135deg,#5ac8fa,#007aff)', purple: 'linear-gradient(135deg,#c084fc,#7d4cdb)', orange: 'linear-gradient(135deg,#ffb340,#ff7a00)',
+  green: 'linear-gradient(135deg,#6be08a,#1fa855)', pink: 'linear-gradient(135deg,#ff8fb1,#ff2d6f)', teal: 'linear-gradient(135deg,#5ee0d6,#0aa1b8)',
+  yellow: 'linear-gradient(135deg,#ffd75e,#ffb000)', gray: 'linear-gradient(135deg,#8e8e93,#48484a)', red: 'linear-gradient(135deg,#ff7a6e,#ff3b30)',
+};
+const PLUS_ITEMS = [
+  { icon: 'chartbar', label: 'Wykres', pre: 'Narysuj wykres: ' }, { icon: 'flow', label: 'Schemat', pre: 'Narysuj schemat/diagram: ' },
+  { icon: 'timeline', label: 'Oś czasu', pre: 'Zrób oś czasu: ' }, { icon: 'cards', label: 'Fiszki', pre: 'Zrób fiszki do nauki: ' },
+  { icon: 'slides', label: 'Prezentacja', pre: 'Zrób prezentację na temat: ' }, { icon: 'exchange', label: 'Kurs walut', send: 'Przelicz walutę: 100 USD na PLN' },
+  { icon: 'lines', label: 'Podsumuj', pre: 'Podsumuj w punktach: ' }, { icon: 'translate', label: 'Przetłumacz', pre: 'Przetłumacz na angielski: ' },
 ];
 const STARTERS = [
-  'Narysuj wykres słupkowy: populacja 5 największych miast Polski',
-  'Zrób schemat jak działa fotosynteza',
-  'Zrób oś czasu wypraw kosmicznych NASA',
-  'Zrób 8 fiszek z angielskiego (czasowniki nieregularne)',
-  'Jaka jest teraz pogoda w Warszawie i ile to 250 EUR w PLN?',
-  'Zrób prezentację o energii odnawialnej (6 slajdów)',
+  { icon: 'chartbar', g: 'blue', t: 'Wykres słupkowy', s: 'Największe miasta Polski', p: 'Narysuj wykres słupkowy: populacja 5 największych miast Polski' },
+  { icon: 'flow', g: 'purple', t: 'Schemat', s: 'Jak działa fotosynteza', p: 'Zrób schemat jak działa fotosynteza' },
+  { icon: 'timeline', g: 'orange', t: 'Oś czasu', s: 'Loty kosmiczne NASA', p: 'Zrób oś czasu wypraw kosmicznych NASA' },
+  { icon: 'cards', g: 'green', t: 'Fiszki', s: 'Angielskie czasowniki', p: 'Zrób 8 fiszek z angielskiego (czasowniki nieregularne)' },
+  { icon: 'weather', g: 'teal', t: 'Pogoda i waluty', s: 'Warszawa, 250 EUR w PLN', p: 'Jaka jest teraz pogoda w Warszawie i ile to 250 EUR w PLN?' },
+  { icon: 'slides', g: 'pink', t: 'Prezentacja', s: 'Energia odnawialna', p: 'Zrób prezentację o energii odnawialnej (6 slajdów)' },
 ];
 
 /* ---------- czaty ---------- */
@@ -82,7 +88,7 @@ function renderList() {
   chats.forEach((c) => {
     const d = document.createElement('div'); d.className = 'chat-item' + (current && c.id === current.id ? ' active' : '');
     const s = document.createElement('span'); s.textContent = c.title;
-    const x = document.createElement('button'); x.append(ico('close')); x.title = 'Usuń';
+    const x = document.createElement('button'); x.className = 'del'; x.append(ico('close')); x.title = 'Usuń';
     x.onclick = (e) => { e.stopPropagation(); chats = chats.filter((k) => k.id !== c.id); persist(); if (current && current.id === c.id) newChat(); else renderList(); };
     d.append(ico(pIcon(persona(c.personaId))), s, x); d.onclick = () => openChat(c.id); el.append(d);
   });
@@ -90,8 +96,9 @@ function renderList() {
 function renderAll() {
   renderList();
   const p = persona(current.personaId);
-  $('#chatTitle').textContent = current.title; rich($('#personaBadge'), `[[${pIcon(p)}]] ${p.name}`); $('#personaBadge').hidden = p.id === 'smiri';
+  updatePersonaUI();
   $('#tempBadge').hidden = !current.temp;
+  updateSend();
   const box = $('#messages'); box.innerHTML = '';
   if (!current.messages.length) { box.append(welcomeEl(p)); return; }
   current.messages.forEach((m) => box.append(msgEl(m, true)));
@@ -99,10 +106,16 @@ function renderAll() {
 }
 function welcomeEl(p) {
   const w = document.createElement('div'); w.id = 'welcome';
-  w.innerHTML = `<div class="orb big"></div><h1></h1><p></p><div class="chips"></div>`;
+  w.innerHTML = `<div class="orb big"></div><h1></h1><p></p><div class="sugg-grid"></div>`;
   w.querySelector('h1').textContent = p.id === 'smiri' ? 'Cześć, jestem Smiri' : p.name;
-  w.querySelector('p').textContent = p.id === 'smiri' ? 'Odpowiadam, szukam w sieci, rysuję wykresy i schematy, robię fiszki, prezentacje, mapy i eksportuję do Worda, PDF i PowerPointa.' : (p.greet || 'Własny bot — napisz, w czym pomóc.');
-  if (p.id === 'smiri') STARTERS.forEach((t, i) => { const c = document.createElement('button'); c.className = 'chip'; c.style.setProperty('--i', i); c.textContent = t; c.onclick = () => send(t); w.querySelector('.chips').append(c); });
+  w.querySelector('p').textContent = p.id === 'smiri' ? 'Pytaj o cokolwiek. Rysuję wykresy i schematy, szukam w sieci i przygotowuję prezentacje.' : (p.greet || 'Napisz, w czym mogę pomóc.');
+  if (p.id === 'smiri') STARTERS.forEach((o, i) => {
+    const c = document.createElement('button'); c.className = 'sugg'; c.style.setProperty('--i', i);
+    const tile = document.createElement('span'); tile.className = 'tile'; tile.style.setProperty('--g', GRAD[o.g]); tile.append(ico(o.icon));
+    const tx = document.createElement('span'); tx.innerHTML = '<div class="t"></div><div class="s"></div>'; tx.querySelector('.t').textContent = o.t; tx.querySelector('.s').textContent = o.s;
+    c.append(tile, tx); c.onclick = () => send(o.p); w.querySelector('.sugg-grid').append(c);
+  });
+  else w.querySelector('.sugg-grid').remove();
   return w;
 }
 function msgEl(m, final) {
@@ -119,7 +132,7 @@ function msgEl(m, final) {
 function fillAi(row, m, final) {
   const body = row.querySelector('.body'), text = m.content, widgets = [];
   const re = /```(chart|mermaid|timeline|flashcards|currency|weather|stock|map|slides)\s*\n([\s\S]*?)```/g;
-  const DRAW = '\n\n<div class="drawing"><span></span><span></span><span></span></div>\n\n';
+  const DRAW = '\n\n<div class="drawing"><span></span><span></span><span></span><span></span></div>\n\n';
   let md = text.replace(re, (_, type, code) => {
     if (!final) return DRAW;
     widgets.push({ type, code: code.trim() }); return `\n\n<div data-w="${widgets.length - 1}"></div>\n\n`;
@@ -149,6 +162,39 @@ function addActions(row, m) {
   row.querySelector('.body').append(a);
 }
 
+const PAL_L = ['#0a6cf0', '#d9650b', '#17915a', '#9b4fd1', '#d4305c', '#2a9fc4'];
+const PAL_D = ['#3d86f2', '#d1701a', '#2aa874', '#a463e6', '#e0456f', '#2a9ab8'];
+function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object') deepMerge(a[k], b[k]); else a[k] = b[k]; } return a; }
+function styleChart(cfg) {
+  const pal = isDark() ? PAL_D : PAL_L, text = cssVar('--muted'), line = cssVar('--line'), surface = cssVar('--surface'), ink = cssVar('--text'), font = cssVar('--font');
+  const type = cfg.type || 'bar', round = ['pie', 'doughnut', 'polarArea'].includes(type), radial = round || type === 'radar';
+  cfg.data = cfg.data || { labels: [], datasets: [] };
+  const sets = cfg.data.datasets || [], multi = sets.length > 1;
+  sets.forEach((d, i) => {
+    const c = pal[i % pal.length];
+    if (round) { if (!d.backgroundColor) d.backgroundColor = (cfg.data.labels || []).map((_, k) => pal[k % pal.length]); d.borderColor = surface; d.borderWidth = 3; d.borderRadius = 8; d.hoverOffset = 8; d.spacing = 1; }
+    else if (type === 'bar') { d.backgroundColor = d.backgroundColor || c; d.borderRadius = d.borderRadius ?? { topLeft: 7, topRight: 7, bottomLeft: 0, bottomRight: 0 }; d.borderSkipped = 'bottom'; d.maxBarThickness = 44; d.categoryPercentage = .72; d.barPercentage = .86; d.borderWidth = 0; }
+    else { d.borderColor = d.borderColor || c; d.backgroundColor = d.backgroundColor || (d.fill ? c + '26' : c); d.borderWidth = 2.5; d.tension = d.tension ?? .35; d.pointRadius = d.pointRadius ?? 0; d.pointHoverRadius = 6; d.pointHoverBackgroundColor = c; d.pointHoverBorderColor = surface; d.pointHoverBorderWidth = 3; }
+  });
+  const base = {
+    responsive: true, maintainAspectRatio: false, layout: { padding: { top: 4, right: 4 } },
+    interaction: { mode: round ? 'nearest' : 'index', intersect: round },
+    animation: { duration: 1100, easing: 'easeOutQuart', delay: (ctx) => (ctx.type === 'data' && ctx.mode === 'default' && !round ? ctx.dataIndex * 70 + ctx.datasetIndex * 120 : 0) },
+    plugins: {
+      legend: { display: multi || round, position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, padding: 16, color: text, font: { family: font, size: 12.5 } } },
+      tooltip: { backgroundColor: surface, titleColor: ink, bodyColor: text, borderColor: line, borderWidth: 1, cornerRadius: 12, padding: 12, boxPadding: 5, usePointStyle: true, titleFont: { family: font, weight: '600', size: 13 }, bodyFont: { family: font, size: 13 }, displayColors: true, caretSize: 0 },
+    },
+    scales: radial ? undefined : {
+      x: { grid: { display: false }, border: { display: false }, ticks: { color: text, font: { family: font, size: 12 }, maxRotation: 0, autoSkipPadding: 12 } },
+      y: { beginAtZero: true, grid: { color: line, drawTicks: false }, border: { display: false }, ticks: { color: text, font: { family: font, size: 12 }, padding: 8, maxTicksLimit: 6 } },
+    },
+  };
+  if (type === 'doughnut') base.cutout = '68%';
+  cfg.options = deepMerge(base, cfg.options || {});
+  if (!radial && cfg.options.scales?.y2) delete cfg.options.scales.y2;   // jedna oś Y
+  return cfg;
+}
+
 function hydrate(host, { type, code }) {
   host.className = 'widget';
   try {
@@ -156,17 +202,15 @@ function hydrate(host, { type, code }) {
     if (type === 'chart') {
       const cfg = J();
       if (cfg.title) { const t = document.createElement('h4'); t.textContent = cfg.title; host.append(t); delete cfg.title; }
-      const cv = document.createElement('canvas'); host.append(cv);
-      Chart.defaults.color = cssVar('--muted'); Chart.defaults.borderColor = cssVar('--line');
-      cfg.options = Object.assign({ responsive: true, maintainAspectRatio: true }, cfg.options || {});
-      const pal = ['#0a84ff', '#bf5af2', '#ff375f', '#30d158', '#ff9f0a', '#64d2ff'], round = ['pie', 'doughnut', 'polarArea'].includes(cfg.type);
-      (cfg.data.datasets || []).forEach((d, i) => {
-        if (!d.backgroundColor) d.backgroundColor = round ? pal : pal[i % pal.length] + 'cc';
-        if (!d.borderColor && !round) d.borderColor = pal[i % pal.length];
-      });
-      new Chart(cv, cfg);
+      const wrap = document.createElement('div'); wrap.className = 'chart-wrap'; const cv = document.createElement('canvas'); wrap.append(cv); host.append(wrap);
+      const mount = () => new Chart(cv, styleChart(cfg));
+      if ('IntersectionObserver' in window) { const io = new IntersectionObserver((en) => { if (en.some((x) => x.isIntersecting)) { io.disconnect(); mount(); } }, { threshold: 0.2 }); io.observe(wrap); } else mount();
     } else if (type === 'mermaid') {
-      mermaid.initialize({ startOnLoad: false, theme: isDark() ? 'dark' : 'neutral', securityLevel: 'strict' });
+      const dk = isDark();
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', flowchart: { curve: 'basis', htmlLabels: true, padding: 14 },
+        themeVariables: { fontFamily: cssVar('--font') || 'system-ui', fontSize: '15px', background: 'transparent',
+          primaryColor: dk ? '#1f2c4a' : '#e6f0ff', primaryBorderColor: dk ? '#3d86f2' : '#0a6cf0', primaryTextColor: dk ? '#f5f5f7' : '#1d1d1f',
+          secondaryColor: dk ? '#2a2140' : '#f1e8fb', tertiaryColor: dk ? '#1c1c1e' : '#ffffff', lineColor: dk ? '#a1a1a6' : '#6e6e73', textColor: dk ? '#f5f5f7' : '#1d1d1f', edgeLabelBackground: dk ? '#1c1c1e' : '#ffffff' } });
       mermaid.render('m' + uid(), code).then((r) => { host.innerHTML = r.svg; })
         .catch(() => { host.innerHTML = '<span class="err">Nie udało się narysować schematu.</span><pre><code></code></pre>'; host.querySelector('code').textContent = code; });
     } else if (type === 'timeline') {
@@ -231,14 +275,14 @@ async function send(text) {
   text = text || 'Przeanalizuj załączony plik.';
   busy = true;
   if (!current) newChat();
-  if (!current.messages.length) { current.title = text.slice(0, 48); $('#chatTitle').textContent = current.title; }
+  if (!current.messages.length) current.title = text.slice(0, 48);
   const um = { role: 'user', content: text, files: pending, attached: pending.map((f) => f.name) };
   pending = []; renderAttachments();
   current.messages.push(um);
   const box = $('#messages'); $('#welcome')?.remove(); const urow = msgEl(um); urow.classList.add('enter'); box.append(urow);
   const ai = { role: 'assistant', content: '', sources: [] };
   const row = msgEl(ai); row.classList.add('streaming', 'enter'); row.querySelector('.body').innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; box.append(row); box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
-  $('#input').value = ''; autosize();
+  $('#input').value = ''; autosize(); updateSend();
   const orb = $('#voice .orb'); orb.classList.add('thinking');
   const p = persona(current.personaId);
   try {
@@ -263,9 +307,10 @@ window.smiriAsk = (t) => { $('#input').value = t; $('#input').focus(); autosize(
 /* ---------- załączniki ---------- */
 function renderAttachments() {
   const el = $('#attachments'); el.innerHTML = '';
-  pending.forEach((f, i) => { const c = document.createElement('span'); c.className = 'chip'; rich(c, '[[clip]] '); c.append(document.createTextNode(f.name)); const x = ico('close'); x.classList.add('x'); x.onclick = () => { pending.splice(i, 1); renderAttachments(); }; c.append(x); el.append(c); });
+  pending.forEach((f, i) => { const c = document.createElement('span'); c.className = 'achip'; c.append(ico('clip'), document.createTextNode(f.name)); const x = document.createElement('button'); x.setAttribute('aria-label', 'Usuń'); x.append(ico('close')); x.onclick = () => { pending.splice(i, 1); renderAttachments(); }; c.append(x); el.append(c); });
+  updateSend();
 }
-$('#attachBtn').onclick = () => $('#file').click();
+function updateSend() { $('#sendBtn').classList.toggle('empty', !$('#input').value.trim() && !pending.length); }
 $('#file').onchange = async (e) => {
   for (const f of e.target.files) {
     if (pending.reduce((s, x) => s + x.size, 0) + f.size > 3 * 1024 * 1024) { alert('Za duże pliki — maksymalnie ok. 3 MB łącznie.'); break; }
@@ -358,8 +403,6 @@ function openPersona(p) {
   $('#pGreet').value = p?.greet || ''; $('#pModel').value = p?.model || ''; $('#pDelete').hidden = !p || p.builtin;
   $('#personaDlg').showModal();
 }
-$('#personaNew').onclick = () => openPersona(null);
-$('#personaEdit').onclick = () => openPersona(persona($('#personaSel').value));
 const personaData = () => ({ icon: pickedIcon, name: $('#pName').value.trim(), prompt: $('#pPrompt').value.trim(), greet: $('#pGreet').value.trim(), model: $('#pModel').value });
 $('#pSave').onclick = () => {
   const data = personaData(); if (!data.name) return;
@@ -374,6 +417,10 @@ $('#pImport').onclick = () => {
   try { const d = JSON.parse(t); pickedIcon = ICON_NAMES.includes(d.icon) ? d.icon : 'bot'; renderIconPick(); $('#pName').value = d.name || ''; $('#pPrompt').value = d.prompt || ''; $('#pGreet').value = d.greet || ''; $('#pModel').value = d.model || ''; } catch { alert('Niepoprawny JSON.'); }
 };
 $('#personaSel').onchange = () => newChat();
+function updatePersonaUI() {
+  const p = persona(current?.personaId || $('#personaSel').value || 'smiri');
+  const pi = $('#ppIcon'); pi.innerHTML = ''; pi.append(ico(pIcon(p))); $('#ppName').textContent = p.name;
+}
 
 /* ---------- ustawienia i UI ---------- */
 settings.model = pickModel(settings.model);
@@ -384,24 +431,56 @@ function openSettings() { $('#theme').value = settings.theme; $('#model').value 
 function autosize() { const t = $('#input'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px'; }
 function renderSearchBtn() { $('#searchBtn').classList.toggle('on', settings.search); $('#searchBtn').title = 'Wyszukiwanie w internecie: ' + (settings.search ? 'włączone' : 'wyłączone'); }
 
-$('#newChat').onclick = () => { newChat(false); $('#sidebar').classList.remove('open'); };
-$('#tempChat').onclick = () => { newChat(true); $('#sidebar').classList.remove('open'); };
-$('#settingsBtn').onclick = openSettings;
-$('#menuBtn').onclick = () => $('#sidebar').classList.toggle('open');
-$('#scrim').onclick = () => $('#sidebar').classList.remove('open');
+const closeMenu = () => { $('#sidebar').classList.remove('open'); document.body.classList.remove('menu-open'); };
+$('#newChat').onclick = () => { newChat(false); closeMenu(); };
+$('#tempChat').onclick = () => { newChat(true); closeMenu(); };
+$('#newTop').onclick = () => newChat(false);
+$('#settingsBtn').onclick = () => { closeMenu(); openSettings(); };
+$('#toolsBtn').onclick = () => { closeMenu(); $('#launcher').showModal(); };
+$('#menuBtn').onclick = () => { $('#sidebar').classList.add('open'); document.body.classList.add('menu-open'); };
+$('#sbClose').onclick = closeMenu; $('#scrim').onclick = closeMenu;
 $('#sendBtn').onclick = () => send($('#input').value);
 $('#micBtn').onclick = openVoice; $('#voiceClose').onclick = closeVoice; $('#wakeBtn').onclick = toggleWake;
 $('#searchBtn').onclick = () => { settings.search = !settings.search; store.set('smiri.settings', settings); renderSearchBtn(); };
-$('#input').addEventListener('input', autosize);
-$('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#input').value); } });
-document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#input').focus(); } if (e.key === 'Escape' && !$('#voice').hidden) closeVoice(); });
+$('#input').addEventListener('input', () => { autosize(); updateSend(); });
+$('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); send($('#input').value); } });
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#input').focus(); }
+  if (e.key === 'Escape') { if (!$('#voice').hidden) closeVoice(); closePopovers(); }
+});
 $('#saveSettings').onclick = () => { settings = Object.assign(settings, { theme: $('#theme').value, model: $('#model').value, password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked }); store.set('smiri.settings', settings); applyTheme(); };
 $('#clearAll').onclick = () => { if (confirm('Usunąć całą historię?')) { chats = []; persist(); $('#settings').close(); newChat(); } };
+document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (e) => { if (e.target === d) d.close(); }));
+document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => b.closest('dialog').close()));
 
-TOOLS.forEach(([label, prefix]) => {
-  const c = document.createElement('button'); c.className = 'chip'; rich(c, label);
-  c.onclick = () => { if (prefix.endsWith(': ')) { $('#input').value = prefix; $('#input').focus(); autosize(); } else send(prefix); };
-  $('#tools').append(c);
-});
+/* ---------- menu podręczne (popover) ---------- */
+function closePopovers() { ['#plusMenu', '#personaMenu'].forEach((id) => { $(id).hidden = true; }); $('#plusBtn').setAttribute('aria-expanded', 'false'); $('#personaPill').setAttribute('aria-expanded', 'false'); }
+function popItem(iconName, label, sub, fn, sel) {
+  const b = document.createElement('button'); b.className = 'pop-item' + (sel ? ' sel' : ''); b.append(ico(iconName));
+  const t = document.createElement('span'); t.textContent = label; if (sub) { const sm = document.createElement('small'); sm.textContent = sub; t.append(sm); } b.append(t);
+  b.onclick = () => { closePopovers(); fn(); }; return b;
+}
+function sep() { const d = document.createElement('div'); d.className = 'pop-sep'; return d; }
+$('#plusBtn').onclick = (e) => {
+  e.stopPropagation(); const m = $('#plusMenu'); if (!m.hidden) return closePopovers(); closePopovers(); m.innerHTML = '';
+  m.append(popItem('clip', 'Dodaj plik lub zdjęcie', 'Obraz, PDF, tekst', () => $('#file').click()), sep());
+  PLUS_ITEMS.forEach((o) => m.append(popItem(o.icon, o.label, '', () => { if (o.send) send(o.send); else { $('#input').value = o.pre; $('#input').focus(); autosize(); updateSend(); } })));
+  const r = $('.box').getBoundingClientRect(); m.style.left = r.left + 'px'; m.style.top = 'auto'; m.style.bottom = (innerHeight - r.top + 10) + 'px'; m.style.setProperty('--ox', '0'); m.style.setProperty('--oy', '100%');
+  m.hidden = false; $('#plusBtn').setAttribute('aria-expanded', 'true');
+};
+$('#personaPill').onclick = (e) => {
+  e.stopPropagation(); const m = $('#personaMenu'); if (!m.hidden) return closePopovers(); closePopovers(); m.innerHTML = '';
+  allPersonas().forEach((p) => m.append(popItem(pIcon(p), p.name, '', () => { $('#personaSel').value = p.id; newChat(); }, p.id === ($('#personaSel').value || 'smiri'))));
+  m.append(sep(), popItem('plus', 'Stwórz własnego bota', '', () => openPersona(null)), popItem('pencil', 'Edytuj tego bota', '', () => openPersona(persona($('#personaSel').value))));
+  const r = $('#personaPill').getBoundingClientRect(); m.style.left = r.left + 'px'; m.style.bottom = 'auto'; m.style.top = (r.bottom + 8) + 'px'; m.style.setProperty('--ox', '0'); m.style.setProperty('--oy', '0');
+  m.hidden = false; $('#personaPill').setAttribute('aria-expanded', 'true');
+};
+document.addEventListener('click', (e) => { if (!e.target.closest('.popover')) closePopovers(); });
+
+/* klawiatura na telefonie: dopasuj wysokość do widocznego obszaru */
+if (window.visualViewport) {
+  const fit = () => { document.documentElement.style.setProperty('--vvh', visualViewport.height + 'px'); window.scrollTo(0, 0); const m = $('#messages'); if (m && document.activeElement === $('#input')) m.scrollTop = m.scrollHeight; };
+  visualViewport.addEventListener('resize', fit); fit();
+}
 
 hydrateIcons(); applyTheme(); renderPersonaSel(); renderSearchBtn(); newChat();

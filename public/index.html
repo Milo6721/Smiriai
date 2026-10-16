@@ -2,9 +2,15 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Smiri</title>
 <link rel="icon" href="assets/logo.png">
+<link rel="apple-touch-icon" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.0/dist/purify.min.js"></script>
@@ -15,120 +21,112 @@
 <body>
 <div class="app">
   <aside id="sidebar">
-    <div class="brand"><span class="orb mini"></span><b>smiri</b></div>
-    <button id="newChat" class="side-btn primary"><i data-ic="plus"></i>Nowy czat</button>
-    <button id="tempChat" class="side-btn"><i data-ic="hourglass"></i>Czat tymczasowy</button>
-
-    <div class="side-title">Persona</div>
-    <div class="row2">
-      <select id="personaSel"></select>
-      <button id="personaNew" class="side-btn sq" title="Stwórz własnego bota"><i data-ic="plus"></i></button>
-      <button id="personaEdit" class="side-btn sq" title="Edytuj"><i data-ic="pencil"></i></button>
+    <div class="sb-top">
+      <div class="brand"><span class="orb mini"></span><b>smiri</b></div>
+      <button id="sbClose" class="icon only-mobile" aria-label="Zamknij"><i data-ic="close"></i></button>
     </div>
-
-    <div class="side-title">Narzędzia</div>
-    <div class="tool-grid" id="toolGrid"></div>
-
+    <button id="newChat" class="btn-new"><i data-ic="plus"></i>Nowy czat</button>
+    <button id="tempChat" class="row-btn"><i data-ic="hourglass"></i>Czat tymczasowy</button>
+    <button id="toolsBtn" class="row-btn"><i data-ic="grid"></i>Narzędzia</button>
     <div class="side-title">Historia</div>
     <div id="chatList"></div>
     <div class="side-foot">
-      <button id="settingsBtn" class="side-btn"><i data-ic="sliders"></i>Ustawienia</button>
-      <small>Ctrl/⌘ + K — pole pisania</small>
+      <button id="settingsBtn" class="row-btn"><i data-ic="sliders"></i>Ustawienia</button>
     </div>
   </aside>
 
   <main>
     <header>
-      <button id="menuBtn" class="icon"><i data-ic="menu"></i></button>
-      <div id="chatTitle">Nowy czat</div>
-      <span id="personaBadge" class="badge soft"></span>
-      <span id="tempBadge" class="badge" hidden>tymczasowy — zniknie po wyjściu</span>
+      <button id="menuBtn" class="icon only-mobile" aria-label="Menu"><i data-ic="menu"></i></button>
+      <button id="personaPill" class="persona-pill" aria-haspopup="true"><span id="ppIcon"></span><span id="ppName">Smiri</span><i data-ic="chevron"></i></button>
+      <span id="tempBadge" class="badge" hidden>Tymczasowy</span>
       <div class="spacer"></div>
-      <button id="searchBtn" class="pill on" title="Wyszukiwanie w internecie"><i data-ic="globe"></i><span>Sieć</span></button>
-      <button id="wakeBtn" class="pill" title="Nasłuchuj „Hey Smiri”"><i data-ic="mic"></i><span>Hey Smiri</span></button>
+      <button id="searchBtn" class="hbtn on" title="Wyszukiwanie w internecie"><i data-ic="globe"></i><span>Sieć</span></button>
+      <button id="wakeBtn" class="hbtn" title="Nasłuchuj „Hey Smiri”"><i data-ic="mic"></i><span>Hey Smiri</span></button>
+      <button id="newTop" class="icon only-mobile" aria-label="Nowy czat"><i data-ic="pencil"></i></button>
     </header>
 
     <div id="messages"></div>
 
     <div id="composer">
-      <div class="chips small" id="tools"></div>
-      <div id="attachments" class="chips small"></div>
+      <div id="attachments"></div>
       <div class="box">
-        <button id="attachBtn" class="icon" title="Dodaj plik, zdjęcie lub PDF"><i data-ic="clip"></i></button>
+        <button id="plusBtn" class="cbtn" aria-label="Dodaj"><i data-ic="plus"></i></button>
         <input id="file" type="file" multiple hidden accept="image/*,application/pdf,.txt,.md,.csv,.json,.js,.py,.html,.css">
-        <textarea id="input" rows="1" placeholder="Zapytaj Smiri o cokolwiek…"></textarea>
-        <button id="micBtn" class="icon" title="Mów"><i data-ic="mic"></i></button>
-        <button id="sendBtn" class="send" title="Wyślij"><i data-ic="up"></i></button>
+        <textarea id="input" rows="1" placeholder="Zapytaj Smiri o cokolwiek" enterkeyhint="send"></textarea>
+        <button id="micBtn" class="cbtn" aria-label="Mów"><i data-ic="mic"></i></button>
+        <button id="sendBtn" class="send" aria-label="Wyślij"><i data-ic="up"></i></button>
       </div>
-      <small class="hint">Smiri może się mylić. Sprawdzaj ważne informacje. Pliki do ok. 3 MB łącznie.</small>
+      <small class="hint">Smiri może się mylić. Sprawdzaj ważne informacje.</small>
     </div>
   </main>
   <div id="scrim"></div>
 </div>
 
+<!-- menu „+” nad polem pisania -->
+<div id="plusMenu" class="popover" hidden></div>
+<!-- wybór persony -->
+<div id="personaMenu" class="popover" hidden></div>
+<select id="personaSel" hidden></select>
+
 <div id="voice" hidden>
   <div class="orb huge listening"></div>
   <div id="voiceText">Słucham…</div>
-  <button id="voiceClose" class="pill">Zamknij</button>
+  <button id="voiceClose" class="pill-btn">Zamknij</button>
 </div>
 
+<!-- narzędzia: ekran z kafelkami -->
+<dialog id="launcher" class="sheet">
+  <div class="sheet-head"><h2>Narzędzia</h2><button class="icon" data-close aria-label="Zamknij"><i data-ic="close"></i></button></div>
+  <div id="launcherGrid" class="launcher"></div>
+</dialog>
+
 <!-- ustawienia -->
-<dialog id="settings">
+<dialog id="settings" class="sheet">
   <form method="dialog">
-    <h2>Ustawienia</h2>
-    <label>Model
+    <div class="sheet-head"><h2>Ustawienia</h2></div>
+    <div class="field"><label for="model">Model</label>
       <select id="model">
         <option value="claude-sonnet-5-5">Sonnet 5.5 — domyślny</option>
-        <option value="claude-haiku-5-5">Haiku 5.5 — najtańszy</option>
-      </select>
-    </label>
-    <label>Kod dostępu (jeśli jest wymagany)
-      <input id="password" type="password" autocomplete="off">
-    </label>
-    <label>Wygląd
-      <select id="theme"><option value="auto">Automatyczny (jak system)</option><option value="light">Jasny</option><option value="dark">Ciemny</option></select>
-    </label>
-    <label>Język głosu
-      <select id="lang"><option value="pl-PL">Polski</option><option value="en-US">English</option></select>
-    </label>
-    <label class="row"><input id="speak" type="checkbox"> Czytaj odpowiedzi na głos</label>
-    <menu>
-      <button id="clearAll" type="button" class="danger">Usuń całą historię</button>
-      <button id="saveSettings" value="ok" class="primary">Zapisz</button>
-    </menu>
+        <option value="claude-haiku-5-5">Haiku 5.5 — najszybszy</option>
+      </select></div>
+    <div class="field"><label for="password">Kod dostępu (jeśli jest wymagany)</label>
+      <input id="password" type="password" autocomplete="off"></div>
+    <div class="field"><label for="theme">Wygląd</label>
+      <select id="theme"><option value="auto">Automatyczny</option><option value="light">Jasny</option><option value="dark">Ciemny</option></select></div>
+    <div class="field"><label for="lang">Język głosu</label>
+      <select id="lang"><option value="pl-PL">Polski</option><option value="en-US">English</option></select></div>
+    <label class="switch-row"><span>Czytaj odpowiedzi na głos</span><input id="speak" type="checkbox" class="switch"></label>
+    <div class="sheet-actions">
+      <button id="clearAll" type="button" class="btn-danger">Usuń historię</button>
+      <button id="saveSettings" value="ok" class="btn-primary">Gotowe</button>
+    </div>
   </form>
 </dialog>
 
 <!-- edytor persony -->
-<dialog id="personaDlg">
+<dialog id="personaDlg" class="sheet">
   <form method="dialog">
-    <h2 id="personaTitle">Własny czat</h2>
+    <div class="sheet-head"><h2 id="personaTitle">Własny czat</h2></div>
     <div id="pIcons" class="icon-pick"></div>
-    <div class="row2"><input id="pName" type="text" placeholder="Nazwa, np. Korepetytor matematyki"></div>
-    <label>Jak ma się zachowywać? Wklej instrukcje
-      <textarea id="pPrompt" rows="9" placeholder="Jesteś cierpliwym korepetytorem matematyki. Tłumaczysz krok po kroku, zadajesz pytania kontrolne, nie podajesz od razu wyniku…"></textarea>
-    </label>
-    <label>Powitanie (opcjonalnie — pierwsza wiadomość bota)
-      <input id="pGreet" type="text" placeholder="Cześć! Z czym pomóc?">
-    </label>
-    <label>Model dla tej persony
-      <select id="pModel"><option value="">— domyślny z ustawień —</option>
-        <option value="claude-sonnet-5-5">Sonnet 5.5</option><option value="claude-haiku-5-5">Haiku 5.5</option></select>
-    </label>
-    <menu>
-      <span>
-        <button id="pDelete" type="button" class="danger">Usuń</button>
-        <button id="pExport" type="button" class="ghost">Kopiuj JSON</button>
-        <button id="pImport" type="button" class="ghost">Importuj</button>
-      </span>
-      <span><button value="cancel" class="ghost">Anuluj</button> <button id="pSave" value="ok" class="primary">Zapisz</button></span>
-    </menu>
+    <div class="field"><label for="pName">Nazwa</label><input id="pName" type="text" placeholder="np. Korepetytor matematyki"></div>
+    <div class="field"><label for="pPrompt">Jak ma się zachowywać? Wklej instrukcje</label>
+      <textarea id="pPrompt" rows="7" placeholder="Jesteś cierpliwym korepetytorem matematyki. Tłumaczysz krok po kroku, zadajesz pytania kontrolne, nie podajesz od razu wyniku…"></textarea></div>
+    <div class="field"><label for="pGreet">Powitanie (opcjonalnie)</label><input id="pGreet" type="text" placeholder="Cześć! Z czym pomóc?"></div>
+    <div class="field"><label for="pModel">Model tej persony</label>
+      <select id="pModel"><option value="">Domyślny z ustawień</option><option value="claude-sonnet-5-5">Sonnet 5.5</option><option value="claude-haiku-5-5">Haiku 5.5</option></select></div>
+    <div class="sheet-actions wrap">
+      <span class="grp"><button id="pDelete" type="button" class="btn-danger">Usuń</button>
+      <button id="pExport" type="button" class="btn-ghost">Kopiuj JSON</button>
+      <button id="pImport" type="button" class="btn-ghost">Importuj</button></span>
+      <span class="grp"><button value="cancel" class="btn-ghost">Anuluj</button><button id="pSave" value="ok" class="btn-primary">Zapisz</button></span>
+    </div>
   </form>
 </dialog>
 
-<!-- panel narzędzi -->
-<dialog id="panel" class="big">
-  <div class="panel-head"><h2 id="panelTitle"></h2><button id="panelClose" class="icon"><i data-ic="close"></i></button></div>
+<!-- panel narzędzia -->
+<dialog id="panel" class="sheet big">
+  <div class="sheet-head"><h2 id="panelTitle"></h2><button id="panelClose" class="icon" aria-label="Zamknij"><i data-ic="close"></i></button></div>
   <div id="panelBody"></div>
 </dialog>
 

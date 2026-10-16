@@ -40,10 +40,11 @@ async function showStock(host, symbol) {
     host.innerHTML = '';
     const ch = d.prev ? ((d.last.close / d.prev.close - 1) * 100) : 0;
     const price = h('big', { text: d.last.close.toLocaleString('pl-PL') });
-    host.append(h('h4', { text: d.symbol.toUpperCase() }), h('div', { class: 'fx' }, price, h('small', { text: `[[${ch >= 0 ? 'up' : 'down'}]] ${Math.abs(ch).toFixed(2)}% · ${d.last.date}` })));
-    const cv = h('canvas'); host.append(cv);
-    new Chart(cv, { type: 'line', data: { labels: d.series.map((p) => p.date), datasets: [{ data: d.series.map((p) => p.close), borderColor: ch >= 0 ? '#30d158' : '#ff375f', backgroundColor: 'transparent', pointRadius: 0, tension: .25 }] }, options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 6 } } } } });
-  } catch (e) { host.textContent = 'Nie udało się pobrać notowań (' + e.message + '). Symbole np. aapl.us, pkn.pl, ^spx, eurusd.'; }
+    host.append(h('h4', { text: d.symbol.toUpperCase() }), h('div', { class: 'fx' }, price, h('small', { class: ch >= 0 ? 'up' : 'down', text: `[[${ch >= 0 ? 'up' : 'down'}]] ${Math.abs(ch).toFixed(2)}% · ${d.last.date}` })));
+    const cv = h('canvas'), wrap = h('div', { class: 'chart-wrap' }, cv); host.append(wrap);
+    const col = ch >= 0 ? '#17915a' : '#d4305c';
+    new Chart(cv, styleChart({ type: 'line', data: { labels: d.series.map((p) => p.date), datasets: [{ label: d.symbol.toUpperCase(), data: d.series.map((p) => p.close), borderColor: col, backgroundColor: col + '22', fill: true }] }, options: { scales: { x: { ticks: { maxTicksLimit: 5 } }, y: { beginAtZero: false } } } }));
+  } catch (e) { host.textContent = ''; host.append(h('div', { class: 'err' }, 'Nie udało się pobrać notowań. Spróbuj symbolu w formacie aapl.us, pkn.pl, ^spx lub eurusd.')); }
 }
 
 /* ---------- mapa (OpenStreetMap) ---------- */
@@ -182,13 +183,23 @@ PANELS.map = { title: '[[map]] Mapa', render(b) {
   const go = () => q.value.trim() && showMap(box, q.value.trim()); q.onkeydown = (e) => e.key === 'Enter' && go(); b.append(h('div', { class: 'bar' }, q, h('button', { class: 'primary', text: 'Szukaj', onclick: go })), box);
 } };
 
-function fxWidget(host, amount, from, to) {
+async function fxWidget(host, amount, from, to, attempt = 0) {
   host.classList.add('widget');
-  host.innerHTML = '<span class="fx"><small>pobieram kurs…</small></span>';
-  fetch(`https://api.frankfurter.app/latest?amount=${encodeURIComponent(amount)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`).then((r) => r.json()).then((d) => {
-    const v = d.rates[to]; host.innerHTML = '<div class="fx"><big></big><small></small></div>';
-    host.querySelector('big').textContent = `${amount} ${from} = ${v.toLocaleString('pl-PL', { maximumFractionDigits: 4 })} ${to}`; host.querySelector('small').textContent = `kurs z ${d.date} (EBC)`;
-  }).catch(() => { host.innerHTML = '<span class="err">Nie udało się pobrać kursu.</span>'; });
+  amount = Number(amount) || 1; from = String(from || '').toUpperCase().trim(); to = String(to || '').toUpperCase().trim();
+  host.innerHTML = '<h4></h4><div class="sk" style="width:58%;height:34px;border-radius:10px"></div><div class="sk" style="width:34%;margin-top:10px"></div>';
+  host.querySelector('h4').textContent = `Kurs ${from} → ${to}`;
+  try {
+    const r = await fetch(`/api/fx?amount=${encodeURIComponent(amount)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    const d = await r.json(); if (!r.ok || typeof d.result !== 'number') throw new Error(d.error || r.status);
+    const f = (n, max = 4) => n.toLocaleString('pl-PL', { maximumFractionDigits: max });
+    host.innerHTML = '';
+    host.append(h('h4', { text: `Kurs ${from} → ${to}` }),
+      h('div', { class: 'fx' }, h('big', { text: `${f(d.result, 2)} ${to}` }), h('small', { text: `${f(amount, 2)} ${from}` })),
+      h('div', { class: 'fx-meta' }, `1 ${from} = ${f(d.rate)} ${to} · 1 ${to} = ${f(1 / d.rate)} ${from} · ${d.date}`));
+  } catch (e) {
+    if (attempt < 1) return setTimeout(() => fxWidget(host, amount, from, to, attempt + 1), 900);
+    host.innerHTML = ''; host.append(h('h4', { text: `Kurs ${from} → ${to}` }), h('div', { class: 'err' }, 'Nie udało się pobrać kursu. '), h('button', { class: 'chip', text: 'Spróbuj ponownie', onclick: () => fxWidget(host, amount, from, to) }));
+  }
 }
 
 PANELS.compare = { title: '[[scale]] Porównaj modele', render(b) {
@@ -206,6 +217,10 @@ PANELS.compare = { title: '[[scale]] Porównaj modele', render(b) {
     } })), cols);
 } };
 
-/* siatka narzędzi w pasku bocznym */
-[['notes', '[[note]] Notatki'], ['reminders', '[[bell]] Przypomnienia'], ['study', '[[cards]] Nauka'], ['calc', '[[calc]] Kalkulator'], ['conv', '[[ruler]] Konwerter'], ['weather', '[[weather]] Pogoda'], ['stock', '[[trend]] Giełda'], ['map', '[[map]] Mapa'], ['compare', '[[scale]] Porównaj']]
-  .forEach(([k, l], i) => $$('#toolGrid').append(h('button', { class: 'side-btn', style: `--i:${i}`, text: l, onclick: () => { openPanel(k); $$('#sidebar').classList.remove('open'); } })));
+/* ekran narzędzi: kafelki jak aplikacje na iOS */
+const TILES = [['notes', 'note', 'Notatki', 'yellow'], ['reminders', 'bell', 'Przypomnienia', 'red'], ['study', 'cards', 'Nauka', 'orange'], ['calc', 'calc', 'Kalkulator', 'gray'], ['conv', 'ruler', 'Konwerter', 'teal'], ['weather', 'weather', 'Pogoda', 'blue'], ['stock', 'trend', 'Giełda', 'green'], ['map', 'map', 'Mapa', 'green'], ['compare', 'scale', 'Porównaj', 'purple']];
+const TILE_G = { yellow: 'linear-gradient(135deg,#ffd75e,#ffb000)', red: 'linear-gradient(135deg,#ff7a6e,#ff3b30)', orange: 'linear-gradient(135deg,#ffb340,#ff7a00)', gray: 'linear-gradient(135deg,#8e8e93,#48484a)', teal: 'linear-gradient(135deg,#5ee0d6,#0aa1b8)', blue: 'linear-gradient(135deg,#5ac8fa,#007aff)', green: 'linear-gradient(135deg,#6be08a,#1fa855)', purple: 'linear-gradient(135deg,#c084fc,#7d4cdb)' };
+TILES.forEach(([k, ic, label, g], i) => {
+  const b = h('button', { class: 'lt', style: `--i:${i}`, onclick: () => { $$('#launcher').close(); setTimeout(() => openPanel(k), 120); } }, h('span', { class: 'tile', style: `--g:${TILE_G[g]}` }, ico(ic)), label);
+  $$('#launcherGrid').append(b);
+});
