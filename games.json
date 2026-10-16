@@ -1,0 +1,72 @@
+[
+  {
+    "id": "tycoon",
+    "name": "Klockowy Tycoon 2",
+    "desc": "Zbuduj fabrykę, kop złoto w kopalni i odpieraj rabusiów. Uważaj na Króla Zbójów.",
+    "url": "https://tycoon-red.vercel.app",
+    "color": "#3DDC84",
+    "art": "tycoon",
+    "tags": [
+      "3D",
+      "budowanie",
+      "zapis postępu"
+    ],
+    "controls": "WASD ruch, spacja skok, F uderz (w kopalni kop), B buduj, E crafting, Q sklep. Na telefonie: joystick i przyciski."
+  },
+  {
+    "id": "skoczek",
+    "name": "Skoczek: 10 Światów",
+    "desc": "Skacz przez lawę, lód i kosmos. Zbieraj gwiazdki i odblokowuj nakrycia głowy.",
+    "url": "https://hellnah-six.vercel.app",
+    "color": "#9B6BFF",
+    "art": "skoczek",
+    "tags": [
+      "3D",
+      "10 światów",
+      "podwójny skok"
+    ],
+    "controls": "WASD ruch, spacja skok (w powietrzu drugi raz), przeciągnij, żeby obrócić kamerę, R wraca na checkpoint, P pauza."
+  },
+  {
+    "id": "niebo",
+    "name": "Podniebny Parkour",
+    "desc": "Jeden tor w chmurach: ruchome platformy, wyrzutnie i lasery. Dotrzyj do pucharu.",
+    "url": "https://niebo-ecru.vercel.app",
+    "color": "#4F9DFF",
+    "art": "niebo",
+    "tags": [
+      "3D",
+      "4 etapy",
+      "na czas"
+    ],
+    "controls": "WASD lub strzałki ruch, spacja skok, przeciągnij, żeby obrócić kamerę, P pauza. Na telefonie: joystick i przycisk Skok."
+  },
+  {
+    "id": "auta",
+    "name": "Pustynny Rajd",
+    "desc": "Ścigaj się z botami, driftuj i uciekaj przed czołgiem, którego nie da się pokonać.",
+    "url": "https://carride-phi.vercel.app",
+    "color": "#FF9A3C",
+    "art": "auta",
+    "tags": [
+      "3D",
+      "kariera",
+      "drift i nitro"
+    ],
+    "controls": "WASD jazda, spacja drift, Shift boost, E wysiąść z auta, R wrócić na tor, P pauza. Na telefonie: joystick, Boost, Drift i Tor."
+  },
+  {
+    "id": "bowshot",
+    "name": "Bow Shot",
+    "desc": "Strzelaj do tarcz, ścinaj drzewa, wspinaj się w góry i walcz z botami w turnieju. Uważaj na wilki i duchy.",
+    "url": "https://bowshot.vercel.app",
+    "color": "#E8445A",
+    "art": "bowshot",
+    "tags": [
+      "3D",
+      "łuki i crafting",
+      "turniej z botami"
+    ],
+    "controls": "WASD ruch, Shift bieg, spacja skok, LPM strzał (w lesie uderzenie), E sklep, warsztat, poziomy i szlaki, Q rodzaj strzały, V widok. Na telefonie: joystick, Strzel, Skok i Wejdź."
+  }
+]
