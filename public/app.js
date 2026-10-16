@@ -341,73 +341,78 @@ async function exportPdf(row) {
 }
 
 /* ---------- głos i „Hey Smiri” ---------- */
-/* Jedna ciągła sesja rozpoznawania mowy obsługuje i hasło, i polecenie — bez przełączania mikrofonu,
-   które kończyło sesję i zamykało ekran. */
+/* Krótkie sesje rozpoznawania w pętli (continuous=false): działa tak samo w Chrome, Safari i na telefonach,
+   a każdy błąd jest pokazywany użytkownikowi zamiast połykany. */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const WAKE_RE = /(?:hej|hey|hi|hello|ok|okej|cześć|czesc)[\s,.!-]*(?:smiri|smiry|smyri|smirri|smyry|smire|smirii|siri|siry|smiri)/i;
-let rec = null, ignoreUntil = 0, wakeOn = false, vmode = 'off', cmdFrom = 0, cmdTimer = 0, idleTimer = 0, lastLen = 0, speaking = false, recStarting = false;
+const WAKE_SRC = '(?:hej|hey|hi|hello|ok|okej|cześć|czesc)[\\s,.!-]*(?:smiri|smiry|smyri|smirri|smyry|smire|smirii|siri|siry)';
+const WAKE_RE = new RegExp(WAKE_SRC, 'i');
+let rec = null, wakeOn = false, vmode = 'off', cmdTimer = 0, idleTimer = 0, speaking = false, errCount = 0;
 function speak(text) {
   if (!('speechSynthesis' in window)) return;
   const t = text.replace(/```[\s\S]*?```/g, ' ').replace(/~~~artifact[\s\S]*?~~~/g, ' ').replace(/[#*_`>|$]/g, ' ').slice(0, 1200);
   speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.lang = settings.lang;
-  u.onstart = () => { speaking = true; }; u.onend = u.onerror = () => { speaking = false; if (!$('#voice').hidden && !busy) setTimeout(() => { if (!speaking && !busy) closeVoice(); }, 1400); };
+  u.onstart = () => { speaking = true; };
+  u.onend = u.onerror = () => { speaking = false; if (!$('#voice').hidden && !busy) setTimeout(() => { if (!speaking && !busy) closeVoice(); }, 1400); };
   speechSynthesis.speak(u);
 }
-function voiceStatus(t) { $('#voiceText').textContent = t; }
+const voiceStatus = (t) => { $('#voiceText').textContent = t; };
+const stripWake = (t) => t.replace(new RegExp('^.*?' + WAKE_SRC, 'i'), '').replace(/^[\s,.!-]+/, '').trim();
+function voiceFail(msg) { toast(msg, null, null, 7000); wakeOn = false; $('#wakeBtn').classList.remove('on'); vmode = 'off'; if (rec) { try { rec.abort(); } catch {} } closeVoice(); }
+function voiceError(code) {
+  if (code === 'no-speech' || code === 'aborted') return;
+  if (code === 'not-allowed') return voiceFail('Mikrofon jest zablokowany. Zezwól na niego w ustawieniach strony (ikona kłódki przy adresie).');
+  if (code === 'service-not-allowed') return voiceFail('Rozpoznawanie mowy jest wyłączone. Na iPhonie włącz: Ustawienia → Ogólne → Klawiatura → Włącz dyktowanie.');
+  if (code === 'audio-capture') return voiceFail('Nie znaleziono mikrofonu.');
+  if (code === 'language-not-supported') return voiceFail('Ta przeglądarka nie obsługuje wybranego języka rozpoznawania mowy.');
+  if (++errCount >= 4) return voiceFail(code === 'network' ? 'Rozpoznawanie mowy wymaga połączenia z internetem.' : 'Nie udało się uruchomić rozpoznawania mowy (' + code + ').');
+}
 function startRec() {
-  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); wakeOn = false; $('#wakeBtn').classList.remove('on'); return false; }
-  if (rec || recStarting) return true;
-  const r = new SR(); r.lang = settings.lang; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1; lastLen = 0; ignoreUntil = 0;
+  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome, Edge lub Safari.'); wakeOn = false; $('#wakeBtn').classList.remove('on'); return false; }
+  if (rec) return true;
+  const r = new SR(); r.lang = settings.lang; r.continuous = false; r.interimResults = true; r.maxAlternatives = 1;
+  let heard = '', final = false;
   r.onresult = (e) => {
-    lastLen = e.results.length;
-    if (speaking) return;                                     // nie słuchaj własnego głosu
-    if (vmode === 'wake') {
-      const from = Math.max(e.resultIndex, ignoreUntil);
-      const t = [...e.results].slice(from).map((x) => x[0].transcript).join(' ');
-      const m = t.match(WAKE_RE);
-      if (m) { vmode = 'cmd'; cmdFrom = e.results.length - 1; wakeCut = t.slice(m.index + m[0].length); showVoice(); onCmd(e); }
-    } else if (vmode === 'cmd') onCmd(e);
+    if (speaking) return;
+    const res = e.results[e.results.length - 1]; heard = res[0].transcript; final = !!res.isFinal; errCount = 0; handleSpeech(heard, final);
   };
-  r.onerror = (e) => {
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { toast('Zezwól przeglądarce na użycie mikrofonu'); wakeOn = false; $('#wakeBtn').classList.remove('on'); vmode = 'off'; closeVoice(); }
+  r.onerror = (e) => voiceError(e.error);
+  r.onend = () => {
+    if (rec === r) rec = null;
+    if (vmode === 'cmd' && heard && !final) { const c = stripWake(heard); if (c) submitVoice(c); }     // Safari czasem nie oznacza wyniku jako końcowego
+    if (wakeOn || vmode === 'cmd') setTimeout(() => { if ((wakeOn || vmode === 'cmd') && !rec && !startRec()) voiceFail('Nie udało się włączyć mikrofonu. Dotknij ikony mikrofonu i spróbuj ponownie.'); }, heard ? 150 : 400);
   };
-  r.onend = () => { rec = null; recStarting = false; if (wakeOn || vmode === 'cmd') setTimeout(() => { if (wakeOn || vmode === 'cmd') startRec(); }, 300); };
-  try { r.start(); rec = r; } catch { setTimeout(() => (rec = null), 0); return false; }
-  return true;
+  try { r.start(); rec = r; return true; } catch { rec = null; return false; }
 }
-let wakeCut = '';
-function cmdTextFrom(e) {
-  const parts = [...e.results].slice(cmdFrom).map((x) => x[0].transcript).join(' ');
-  let t = parts; if (wakeCut !== null && cmdFrom === e.results.length - 1 && WAKE_RE.test(parts)) t = parts.replace(/^.*?(?:hej|hey|hi|hello|ok|okej|cześć|czesc)[\s,.!-]*(?:smiri|smiry|smyri|smirri|smyry|smire|smirii|siri|siry)/i, '');
-  return t.replace(/^[\s,.!-]+/, '').trim();
+function handleSpeech(t, fin) {
+  if (vmode === 'wake') {
+    if (!WAKE_RE.test(t)) return;
+    vmode = 'cmd'; showVoice();
+  }
+  if (vmode === 'cmd') {
+    const c = stripWake(t); clearTimeout(idleTimer); idleTimer = setTimeout(idleClose, 9000);
+    voiceStatus(c || 'Słucham…');
+    if (fin && c) submitVoice(c);
+  }
 }
-function onCmd(e) {
-  const t = cmdTextFrom(e); clearTimeout(idleTimer);
-  voiceStatus(t || 'Słucham…');
-  clearTimeout(cmdTimer);
-  if (t) cmdTimer = setTimeout(() => submitVoice(t), 1700);      // koniec wypowiedzi po chwili ciszy
-  else idleTimer = setTimeout(() => { if (vmode === 'cmd' && !$('#voice').hidden) closeVoice(); }, 9000);
-}
+function idleClose() { if (vmode === 'cmd' && !$('#voice').hidden) closeVoice(); }
 function submitVoice(t) {
-  clearTimeout(cmdTimer); if (vmode !== 'cmd') return;
-  vmode = wakeOn ? 'wake' : 'off'; ignoreUntil = lastLen; voiceStatus(t);
-  if (!wakeOn && rec) { try { rec.stop(); } catch {} }
-  send(t);
+  if (vmode !== 'cmd') return;
+  clearTimeout(idleTimer); vmode = wakeOn ? 'wake' : 'off'; voiceStatus(t); send(t);
 }
-function showVoice() { $('#voice').hidden = false; voiceStatus('Słucham…'); clearTimeout(idleTimer); idleTimer = setTimeout(() => { if (vmode === 'cmd' && !$('#voice').hidden) closeVoice(); }, 9000); }
+function showVoice() { $('#voice').hidden = false; voiceStatus('Słucham…'); clearTimeout(idleTimer); idleTimer = setTimeout(idleClose, 9000); }
 function openVoice() {                                          // przycisk mikrofonu
-  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); return; }
-  vmode = 'cmd'; wakeCut = null; cmdFrom = rec ? lastLen : 0; showVoice();
-  if (!rec) startRec();
+  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome, Edge lub Safari.'); return; }
+  errCount = 0; vmode = 'cmd'; showVoice();
+  if (!startRec()) voiceFail('Nie udało się włączyć mikrofonu.');
 }
 function closeVoice() {
-  clearTimeout(cmdTimer); clearTimeout(idleTimer); $('#voice').hidden = true; speechSynthesis.cancel(); speaking = false;
-  vmode = wakeOn ? 'wake' : 'off'; if (!wakeOn && rec) { try { rec.stop(); } catch {} }
+  clearTimeout(idleTimer); $('#voice').hidden = true; speechSynthesis.cancel(); speaking = false;
+  vmode = wakeOn ? 'wake' : 'off'; if (!wakeOn && rec) { try { rec.abort(); } catch {} }
 }
 function toggleWake() {
-  wakeOn = !wakeOn; $('#wakeBtn').classList.toggle('on', wakeOn);
+  wakeOn = !wakeOn; $('#wakeBtn').classList.toggle('on', wakeOn); errCount = 0;
   if (wakeOn) { vmode = 'wake'; if (startRec()) toast('Nasłuchuję. Powiedz: „Hey Smiri”'); }
-  else { vmode = 'off'; if (rec) { try { rec.stop(); } catch {} } }
+  else { vmode = 'off'; if (rec) { try { rec.abort(); } catch {} } }
 }
 
 /* ---------- persony ---------- */
