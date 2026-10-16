@@ -1,244 +1,195 @@
 'use strict';
-/* Smiri — rdzeń czatu. */
+/* Smiri — rdzeń: czaty, projekty, pamięć, wysyłanie i ustawienia. */
 
 const $ = (s) => document.querySelector(s);
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v, (key, val) => (key === 'files' ? undefined : val))); } catch {} },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v, (key, val) => (key === 'files' || key === '_mem' || key === '_artOpened' ? undefined : val))); } catch {} },
 };
 
-let settings = Object.assign({ theme: 'auto', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true }, store.get('smiri.settings', {}));
+let settings = Object.assign({ theme: 'auto', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true }, store.get('smiri.settings', {}));
 let chats = store.get('smiri.chats', []);
-let current = null, busy = false, pending = [];       // pending = załączniki do następnej wiadomości
+let memories = store.get('smiri.memory', []);
+let projects = store.get('smiri.projects', []);
+let personas = store.get('smiri.personas', []);
+let current = null, busy = false, pending = [], abortCtl = null, researchNext = false, chatQuery = '';
+
+const OK_MODELS = ['claude-sonnet-5-5', 'claude-haiku-5-5'];
+const pickModel = (m) => (OK_MODELS.includes(m) ? m : 'claude-sonnet-5-5');
+settings.model = pickModel(settings.model);
 
 const DEFAULT_PERSONAS = [
   { id: 'smiri', icon: 'spark', name: 'Smiri', prompt: '', builtin: true },
   { id: 'teacher', icon: 'gradcap', name: 'Nauczyciel', prompt: 'Jesteś cierpliwym nauczycielem. Tłumacz krok po kroku prostym językiem, podawaj przykłady, a na końcu zadaj jedno pytanie sprawdzające. Gdy pasuje, zaproponuj fiszki.', builtin: true },
-  { id: 'dev', icon: 'code', name: 'Programista', prompt: 'Jesteś doświadczonym programistą. Odpowiadaj precyzyjnie, z działającym kodem w blokach kodu i krótkim wyjaśnieniem. Wskazuj błędy i przypadki brzegowe.', builtin: true },
+  { id: 'dev', icon: 'code', name: 'Programista', prompt: 'Jesteś doświadczonym programistą. Odpowiadaj precyzyjnie, z działającym kodem w blokach kodu i krótkim wyjaśnieniem. Wskazuj błędy i przypadki brzegowe. Dłuższe programy podawaj jako artefakty.', builtin: true },
   { id: 'translator', icon: 'globe', name: 'Tłumacz', prompt: 'Jesteś tłumaczem. Tłumacz tekst użytkownika na język, o który prosi (domyślnie PL↔EN), zachowując ton. Na końcu, jeśli to ważne, dodaj krótką uwagę o niuansach.', builtin: true },
 ];
-let personas = store.get('smiri.personas', []);
 const allPersonas = () => [...DEFAULT_PERSONAS, ...personas];
-const OK_MODELS = ['claude-sonnet-5-5', 'claude-haiku-5-5'];
-const pickModel = (m) => (OK_MODELS.includes(m) ? m : 'claude-sonnet-5-5');
 const pIcon = (p) => p.icon || 'bot';
 const persona = (id) => allPersonas().find((p) => p.id === id) || DEFAULT_PERSONAS[0];
+const project = (id) => projects.find((p) => p.id === id);
 
-const SYSTEM = `Jesteś Smiri — szybkim, mądrym asystentem AI. Odpowiadaj w języku użytkownika, zwięźle i konkretnie. Używaj Markdown.
-Gdy pomaga to użytkownikowi, wstawiaj interaktywne widżety jako bloki kodu z DOKŁADNIE tymi nazwami języków:
+const STYLES = {
+  default: { label: 'Domyślny', text: '' },
+  concise: { label: 'Zwięzły', text: 'Odpowiadaj bardzo zwięźle: krótkie zdania, bez wstępów i podsumowań.' },
+  explain: { label: 'Wyjaśniający', text: 'Wyjaśniaj dokładnie i przystępnie, krok po kroku, z przykładami i analogiami.' },
+  formal: { label: 'Formalny', text: 'Używaj formalnego, profesjonalnego tonu, pełnych zdań i precyzyjnego słownictwa.' },
+  casual: { label: 'Luźny', text: 'Pisz swobodnie i po koleżeńsku, prostym językiem, jak do znajomego.' },
+};
 
-1) \`\`\`chart — poprawny JSON konfiguracji Chart.js 4 (type, data, options). Bez funkcji i komentarzy. Opcjonalne "title" na najwyższym poziomie.
-2) \`\`\`mermaid — diagram Mermaid (flowchart, sequenceDiagram, mindmap, classDiagram, gantt, erDiagram…) do schematów i procesów.
-3) \`\`\`timeline — tablica JSON: [{"date":"1969","title":"…","text":"…"}] — oś czasu.
-4) \`\`\`flashcards — tablica JSON: [{"q":"pytanie","a":"odpowiedź"}] — fiszki.
-5) \`\`\`currency — JSON: {"amount":100,"from":"USD","to":"PLN"} — aplikacja pobierze aktualny kurs. Nie zgaduj kursów w tekście.
-6) \`\`\`weather — JSON: {"city":"Kraków"} — aktualna pogoda i prognoza 5 dni.
-7) \`\`\`stock — JSON: {"symbol":"aapl.us"} — wykres notowań (symbole Stooq: aapl.us, msft.us, pkn.pl, ^spx, eurusd, btc.v).
-8) \`\`\`map — JSON: {"query":"Wawel, Kraków"} — mapa miejsca.
-9) \`\`\`slides — tablica JSON: [{"title":"…","bullets":["…","…"]}] — prezentacja z przyciskiem pobierania PowerPointa.
+const SYSTEM = `Jesteś Smiri — szybkim, mądrym asystentem AI. Odpowiadaj w języku użytkownika, rzeczowo, bez zbędnych wstępów. Używaj Markdown. Nie używaj emoji. Wzory matematyczne zapisuj w LaTeX: $...$ (w tekście) i $$...$$ (osobna linia).
 
-Tabele pisz w Markdown. Nie opisuj składni widżetów użytkownikowi, po prostu ich używaj, gdy pasują. Gdy masz dostęp do wyszukiwarki, używaj jej przy pytaniach o aktualne fakty i podawaj źródła. Do zdjęć, PDF-ów i plików od użytkownika odnoś się wprost. Nie używaj emoji.`;
+Widżety wstawiaj jako bloki kodu z DOKŁADNIE tymi nazwami języków, gdy pomagają użytkownikowi:
+1) \`\`\`chart — JSON konfiguracji Chart.js 4 (type, data, options), bez funkcji i komentarzy; opcjonalne "title" na najwyższym poziomie.
+2) \`\`\`mermaid — diagram Mermaid (flowchart, sequenceDiagram, mindmap, classDiagram, gantt, erDiagram…).
+3) \`\`\`timeline — [{"date":"1969","title":"…","text":"…"}] — oś czasu.
+4) \`\`\`flashcards — [{"q":"…","a":"…"}] — fiszki.
+5) \`\`\`currency — {"amount":100,"from":"USD","to":"PLN"} — aplikacja pobiera aktualny kurs; nie zgaduj kursów w tekście.
+6) \`\`\`weather — {"city":"Kraków"} — pogoda i prognoza 5 dni.
+7) \`\`\`stock — {"symbol":"aapl.us"} — wykres notowań (symbole Stooq: aapl.us, msft.us, pkn.pl, ^spx, eurusd, btc.v).
+8) \`\`\`map — {"query":"Wawel, Kraków"} — mapa miejsca.
+9) \`\`\`slides — [{"title":"…","bullets":["…"]}] — prezentacja z przyciskiem pobrania PowerPointa.
+
+ARTEFAKTY: gdy wynik jest dłuższy i samodzielny (strona lub aplikacja HTML, grafika SVG, dokument, plik z kodem), umieść go w bloku zaczynającym się od linii ~~~artifact i kończącym linią ~~~ (tyldy, nie backticki). Pierwsza linia wewnątrz to JSON nagłówka w jednej linii: {"type":"html","title":"Kalkulator"} (type: html, svg, markdown, code, mermaid; dla code dodaj "language"). Potem linia --- i treść. HTML ma być kompletnym dokumentem z wbudowanym CSS i JS. Przy prośbie o zmianę wygeneruj pełny artefakt ponownie z tym samym tytułem. Krótkie fragmenty kodu podawaj w zwykłych blokach kodu.
+
+PAMIĘĆ: gdy użytkownik poda trwały fakt o sobie lub poprosi, byś coś zapamiętał, dodaj na samym końcu blok \`\`\`memory z {"add":"krótki fakt w trzeciej osobie"}.
+PODPOWIEDZI: na końcu odpowiedzi dłuższej niż dwa zdania dodaj blok \`\`\`followups z tablicą 2–3 krótkich pytań, które użytkownik mógłby zadać dalej.
+
+Tabele pisz w Markdown. Nie opisuj składni widżetów. Gdy masz wyszukiwarkę, używaj jej przy aktualnych faktach i podawaj źródła. Do zdjęć, PDF-ów i plików użytkownika odnoś się wprost.`;
+
+function buildSystem(p, research) {
+  const parts = [SYSTEM];
+  const st = STYLES[settings.style]?.text; if (st) parts.push('# Styl odpowiedzi\n' + st);
+  if (settings.aboutMe.trim()) parts.push('# O użytkowniku\n' + settings.aboutMe.trim());
+  if (settings.howRespond.trim()) parts.push('# Jak odpowiadać\n' + settings.howRespond.trim());
+  if (settings.memoryOn && !current?.temp && memories.length) parts.push('# Pamięć (znane fakty o użytkowniku)\n' + memories.slice(0, 60).map((m) => '- ' + m.text).join('\n'));
+  const pr = current?.projectId && project(current.projectId);
+  if (pr) {
+    parts.push(`# Projekt: ${pr.name}\n${pr.instructions || ''}`);
+    let budget = 80000; (pr.files || []).forEach((f) => { if (budget <= 0) return; const t = f.text.slice(0, budget); budget -= t.length; parts.push(`## Plik projektu: ${f.name}\n${t}`); });
+  }
+  if (p.prompt) parts.push(`# Persona: ${p.name}\n${p.prompt}`);
+  if (research) parts.push('# Tryb: głębokie badanie\nPrzeprowadź dokładne badanie: wykonaj wiele wyszukiwań z różnych źródeł, porównaj je, a wynik podaj jako uporządkowany raport z nagłówkami, kluczowymi wnioskami i rzetelnie podanymi źródłami. Zaznacz niepewności.');
+  return parts.join('\n\n');
+}
 
 const GRAD = {
   blue: 'linear-gradient(135deg,#5ac8fa,#007aff)', purple: 'linear-gradient(135deg,#c084fc,#7d4cdb)', orange: 'linear-gradient(135deg,#ffb340,#ff7a00)',
   green: 'linear-gradient(135deg,#6be08a,#1fa855)', pink: 'linear-gradient(135deg,#ff8fb1,#ff2d6f)', teal: 'linear-gradient(135deg,#5ee0d6,#0aa1b8)',
-  yellow: 'linear-gradient(135deg,#ffd75e,#ffb000)', gray: 'linear-gradient(135deg,#8e8e93,#48484a)', red: 'linear-gradient(135deg,#ff7a6e,#ff3b30)',
 };
 const PLUS_ITEMS = [
   { icon: 'chartbar', label: 'Wykres', pre: 'Narysuj wykres: ' }, { icon: 'flow', label: 'Schemat', pre: 'Narysuj schemat/diagram: ' },
   { icon: 'timeline', label: 'Oś czasu', pre: 'Zrób oś czasu: ' }, { icon: 'cards', label: 'Fiszki', pre: 'Zrób fiszki do nauki: ' },
-  { icon: 'slides', label: 'Prezentacja', pre: 'Zrób prezentację na temat: ' }, { icon: 'exchange', label: 'Kurs walut', send: 'Przelicz walutę: 100 USD na PLN' },
-  { icon: 'lines', label: 'Podsumuj', pre: 'Podsumuj w punktach: ' }, { icon: 'translate', label: 'Przetłumacz', pre: 'Przetłumacz na angielski: ' },
+  { icon: 'slides', label: 'Prezentacja', pre: 'Zrób prezentację na temat: ' }, { icon: 'layers', label: 'Strona lub aplikacja', pre: 'Zrób jako artefakt stronę HTML: ' },
+  { icon: 'exchange', label: 'Kurs walut', send: 'Przelicz walutę: 100 USD na PLN' }, { icon: 'translate', label: 'Przetłumacz', pre: 'Przetłumacz na angielski: ' },
 ];
 const STARTERS = [
-  { icon: 'chartbar', g: 'blue', t: 'Wykres słupkowy', s: 'Największe miasta Polski', p: 'Narysuj wykres słupkowy: populacja 5 największych miast Polski' },
-  { icon: 'flow', g: 'purple', t: 'Schemat', s: 'Jak działa fotosynteza', p: 'Zrób schemat jak działa fotosynteza' },
-  { icon: 'timeline', g: 'orange', t: 'Oś czasu', s: 'Loty kosmiczne NASA', p: 'Zrób oś czasu wypraw kosmicznych NASA' },
-  { icon: 'cards', g: 'green', t: 'Fiszki', s: 'Angielskie czasowniki', p: 'Zrób 8 fiszek z angielskiego (czasowniki nieregularne)' },
-  { icon: 'weather', g: 'teal', t: 'Pogoda i waluty', s: 'Warszawa, 250 EUR w PLN', p: 'Jaka jest teraz pogoda w Warszawie i ile to 250 EUR w PLN?' },
+  { icon: 'chartbar', g: 'blue', t: 'Wykres', s: 'Największe miasta Polski', p: 'Narysuj wykres słupkowy: populacja 5 największych miast Polski' },
+  { icon: 'layers', g: 'purple', t: 'Aplikacja', s: 'Kalkulator kredytu jako strona', p: 'Zrób jako artefakt działający kalkulator kredytu hipotecznego w HTML' },
+  { icon: 'globe', g: 'teal', t: 'Głębokie badanie', s: 'Rynek fotowoltaiki w Polsce', p: '__research__Zrób raport o rynku fotowoltaiki w Polsce w 2025 roku' },
+  { icon: 'code', g: 'orange', t: 'Kod', s: 'Uruchom skrypt w Pythonie', p: 'Napisz w Pythonie program liczący liczby pierwsze do 100 i go uruchomię' },
+  { icon: 'cards', g: 'green', t: 'Nauka', s: 'Fiszki z angielskiego', p: 'Zrób 8 fiszek z angielskiego (czasowniki nieregularne)' },
   { icon: 'slides', g: 'pink', t: 'Prezentacja', s: 'Energia odnawialna', p: 'Zrób prezentację o energii odnawialnej (6 slajdów)' },
 ];
 
 /* ---------- czaty ---------- */
-const uid = () => Math.random().toString(36).slice(2, 10);
-function newChat(temp = false) {
-  dropTemp();
+function newChat(temp = false, projectId) {
+  dropTemp(); closeArtifact();
   const p = persona($('#personaSel').value || 'smiri');
-  current = { id: uid(), title: temp ? 'Czat tymczasowy' : 'Nowy czat', temp, personaId: p.id, messages: [] };
+  current = { id: uid(), title: temp ? 'Czat tymczasowy' : 'Nowy czat', temp, personaId: p.id, projectId: projectId !== undefined ? projectId : (current?.projectId || ''), t: Date.now(), messages: [] };
   renderAll();
 }
 function dropTemp() { if (current && current.temp) current = null; }
 function persist() { store.set('smiri.chats', chats.filter((c) => !c.temp)); }
 function saveCurrent() {
   if (!current || current.temp || !current.messages.length) return;
+  current.t = Date.now();
   if (!chats.find((c) => c.id === current.id)) chats.unshift(current);
   persist(); renderList();
 }
-function openChat(id) { dropTemp(); current = chats.find((c) => c.id === id); $('#personaSel').value = current.personaId || 'smiri'; renderAll(); $('#sidebar').classList.remove('open'); }
+function openChat(id) { dropTemp(); closeArtifact(); current = chats.find((c) => c.id === id); $('#personaSel').value = current.personaId || 'smiri'; renderAll(); closeSidebar(); }
 window.addEventListener('beforeunload', dropTemp);
 
-/* ---------- render ---------- */
 function renderPersonaSel() {
   const sel = $('#personaSel'), v = sel.value; sel.innerHTML = '';
   allPersonas().forEach((p) => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; sel.append(o); });
   sel.value = allPersonas().some((p) => p.id === v) ? v : 'smiri';
 }
+function chatText(c) { return (c.title + ' ' + c.messages.map((m) => m.content).join(' ')).toLowerCase(); }
+function groupChats(list) {
+  const now = new Date(); const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(); const day = 864e5;
+  const groups = [['Przypięte', []], ['Dziś', []], ['Wczoraj', []], ['Ostatnie 7 dni', []], ['Starsze', []]];
+  [...list].sort((a, b) => (b.t || 0) - (a.t || 0)).forEach((c) => {
+    const t = c.t || 0; const g = c.pinned ? 0 : t >= d0 ? 1 : t >= d0 - day ? 2 : t >= d0 - 7 * day ? 3 : 4; groups[g][1].push(c);
+  });
+  return groups.filter((g) => g[1].length);
+}
 function renderList() {
   const el = $('#chatList'); el.innerHTML = '';
-  chats.forEach((c) => {
-    const d = document.createElement('div'); d.className = 'chat-item' + (current && c.id === current.id ? ' active' : '');
-    const s = document.createElement('span'); s.textContent = c.title;
-    const x = document.createElement('button'); x.className = 'del'; x.append(ico('close')); x.title = 'Usuń';
-    x.onclick = (e) => { e.stopPropagation(); chats = chats.filter((k) => k.id !== c.id); persist(); if (current && current.id === c.id) newChat(); else renderList(); };
-    d.append(ico(pIcon(persona(c.personaId))), s, x); d.onclick = () => openChat(c.id); el.append(d);
+  const q = chatQuery.trim().toLowerCase();
+  const list = q ? chats.filter((c) => chatText(c).includes(q)) : chats;
+  if (!list.length) { const e = document.createElement('div'); e.className = 'empty-list'; e.textContent = q ? 'Brak wyników' : 'Tu pojawią się Twoje rozmowy'; el.append(e); return; }
+  groupChats(list).forEach(([label, items]) => {
+    const h = document.createElement('div'); h.className = 'grp-title'; h.textContent = label; el.append(h);
+    items.forEach((c) => {
+      const d = document.createElement('div'); d.className = 'chat-item' + (current && c.id === current.id ? ' active' : '');
+      const s = document.createElement('span'); s.textContent = c.title;
+      const x = document.createElement('button'); x.className = 'more'; x.setAttribute('aria-label', 'Opcje'); x.append(ico('more'));
+      x.onclick = (e) => { e.stopPropagation(); chatMenu(c, x); };
+      d.append(ico(c.projectId && project(c.projectId) ? 'folder' : pIcon(persona(c.personaId))), s, x); d.onclick = () => openChat(c.id);
+      d.oncontextmenu = (e) => { e.preventDefault(); chatMenu(c, { x: e.clientX, y: e.clientY }); };
+      el.append(d);
+    });
   });
 }
+function chatMenu(c, anchor) {
+  openMenu(anchor, [
+    { icon: 'pin', label: c.pinned ? 'Odepnij' : 'Przypnij', fn: () => { c.pinned = !c.pinned; persist(); renderList(); } },
+    { icon: 'pencil', label: 'Zmień nazwę', fn: () => { const t = prompt('Nazwa rozmowy:', c.title); if (t && t.trim()) { c.title = t.trim().slice(0, 80); persist(); renderList(); } } },
+    { icon: 'download', label: 'Eksportuj jako Markdown', fn: () => exportChat(c) },
+    'sep',
+    { icon: 'trash', label: 'Usuń', danger: true, fn: () => { chats = chats.filter((k) => k.id !== c.id); persist(); if (current && current.id === c.id) newChat(); else renderList(); toast('Rozmowa usunięta'); } },
+  ], { alignRight: !anchor.x });
+}
+function exportChat(c) {
+  const md = `# ${c.title}\n\n` + c.messages.map((m) => `**${m.role === 'user' ? 'Ty' : 'Smiri'}:**\n\n${m.content.replace(/```(?:followups|memory)[\s\S]*?```/g, '').trim()}\n`).join('\n---\n\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' })); a.download = c.title.replace(/[^\w\- ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g, '').trim() + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+/* ---------- widok czatu ---------- */
+function updateHeader() {
+  const p = persona(current?.personaId || $('#personaSel').value || 'smiri');
+  const pi = $('#ppIcon'); pi.innerHTML = ''; pi.append(ico(pIcon(p))); $('#ppName').textContent = p.name;
+  const pr = current?.projectId && project(current.projectId); const b = $('#projBadge'); b.hidden = !pr; if (pr) { b.innerHTML = ''; b.append(ico('folder'), document.createTextNode(pr.name)); }
+  $('#tempBadge').hidden = !current?.temp;
+}
 function renderAll() {
-  renderList();
-  const p = persona(current.personaId);
-  updatePersonaUI();
-  $('#tempBadge').hidden = !current.temp;
-  updateSend();
+  renderList(); updateHeader(); updateSend();
   const box = $('#messages'); box.innerHTML = '';
-  if (!current.messages.length) { box.append(welcomeEl(p)); return; }
-  current.messages.forEach((m) => box.append(msgEl(m, true)));
-  box.scrollTop = box.scrollHeight;
+  if (!current.messages.length) { box.append(welcomeEl(persona(current.personaId))); return; }
+  current.messages.forEach((m, i) => box.append(msgEl(m, i, true)));
+  box.scrollTop = box.scrollHeight; updateToBottom();
 }
 function welcomeEl(p) {
   const w = document.createElement('div'); w.id = 'welcome';
+  const pr = current?.projectId && project(current.projectId);
   w.innerHTML = `<div class="orb big"></div><h1></h1><p></p><div class="sugg-grid"></div>`;
-  w.querySelector('h1').textContent = p.id === 'smiri' ? 'Cześć, jestem Smiri' : p.name;
-  w.querySelector('p').textContent = p.id === 'smiri' ? 'Pytaj o cokolwiek. Rysuję wykresy i schematy, szukam w sieci i przygotowuję prezentacje.' : (p.greet || 'Napisz, w czym mogę pomóc.');
-  if (p.id === 'smiri') STARTERS.forEach((o, i) => {
+  w.querySelector('h1').textContent = p.id === 'smiri' ? (pr ? pr.name : 'Cześć, jestem Smiri') : p.name;
+  w.querySelector('p').textContent = pr ? 'Rozmowa w projekcie. Smiri zna jego instrukcje i pliki.' : p.id === 'smiri' ? 'Pytaj o cokolwiek. Rysuję wykresy, buduję strony i aplikacje, szukam w sieci i uruchamiam kod.' : (p.greet || 'Napisz, w czym mogę pomóc.');
+  if (p.id === 'smiri' && !pr) STARTERS.forEach((o, i) => {
     const c = document.createElement('button'); c.className = 'sugg'; c.style.setProperty('--i', i);
     const tile = document.createElement('span'); tile.className = 'tile'; tile.style.setProperty('--g', GRAD[o.g]); tile.append(ico(o.icon));
     const tx = document.createElement('span'); tx.innerHTML = '<div class="t"></div><div class="s"></div>'; tx.querySelector('.t').textContent = o.t; tx.querySelector('.s').textContent = o.s;
-    c.append(tile, tx); c.onclick = () => send(o.p); w.querySelector('.sugg-grid').append(c);
+    c.append(tile, tx); c.onclick = () => { if (o.p.startsWith('__research__')) { researchNext = true; renderAttachments(); send(o.p.slice(12)); } else send(o.p); }; w.querySelector('.sugg-grid').append(c);
   });
   else w.querySelector('.sugg-grid').remove();
   return w;
 }
-function msgEl(m, final) {
-  const row = document.createElement('div'); row.className = 'msg ' + (m.role === 'user' ? 'user' : 'ai');
-  if (m.role === 'user') {
-    const b = document.createElement('div'); b.className = 'body';
-    b.textContent = m.content; if (m.attached?.length) { const f = document.createElement('div'); f.className = 'att'; f.append(ico('clip'), document.createTextNode(m.attached.join(', '))); b.append(f); } row.append(b); return row;
-  }
-  const av = document.createElement('div'); av.className = 'av'; const b = document.createElement('div'); b.className = 'body';
-  row.append(av, b); fillAi(row, m, final); return row;
-}
-
-/* Markdown + widżety */
-function fillAi(row, m, final) {
-  const body = row.querySelector('.body'), text = m.content, widgets = [];
-  const re = /```(chart|mermaid|timeline|flashcards|currency|weather|stock|map|slides)\s*\n([\s\S]*?)```/g;
-  const DRAW = '\n\n<div class="drawing"><span></span><span></span><span></span><span></span></div>\n\n';
-  let md = text.replace(re, (_, type, code) => {
-    if (!final) return DRAW;
-    widgets.push({ type, code: code.trim() }); return `\n\n<div data-w="${widgets.length - 1}"></div>\n\n`;
-  });
-  md = md.replace(/```(?:chart|mermaid|timeline|flashcards|currency|weather|stock|map|slides)[^`]*$/, DRAW);   // blok jeszcze się pisze
-  body.innerHTML = DOMPurify.sanitize(marked.parse(md));
-  body.querySelectorAll('a').forEach((a) => { a.target = '_blank'; a.rel = 'noopener'; });
-  body.querySelectorAll('[data-w]').forEach((h) => { const w = widgets[+h.dataset.w]; if (w) hydrate(h, w); });
-  body.querySelectorAll('.tl-item,.card,.slide,.wx>div').forEach((e, i) => e.style.setProperty('--i', i));
-  if (final && !m.noActions) {
-    if (m.sources?.length) {
-      const s = document.createElement('div'); s.className = 'sources';
-      m.sources.slice(0, 8).forEach((x) => { const a = document.createElement('a'); a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; a.append(ico('link'), document.createTextNode(x.title || x.url)); s.append(a); });
-      body.append(s);
-    }
-    addActions(row, m);
-  }
-}
-window.smiriRender = (row, text, final) => fillAi(row, { content: text, noActions: true }, final);
-function addActions(row, m) {
-  const a = document.createElement('div'); a.className = 'actions';
-  const add = (label, f, title) => { const b = document.createElement('button'); rich(b, label); if (title) b.title = title; b.onclick = f; a.append(b); };
-  add('[[copy]] Kopiuj', () => navigator.clipboard.writeText(m.content));
-  add('[[doc]] Word', () => exportWord(row));
-  add('[[pdf]] PDF', () => exportPdf(row));
-  add('[[speaker]]', () => speak(m.content), 'Przeczytaj na głos');
-  row.querySelector('.body').append(a);
-}
-
-const PAL_L = ['#0a6cf0', '#d9650b', '#17915a', '#9b4fd1', '#d4305c', '#2a9fc4'];
-const PAL_D = ['#3d86f2', '#d1701a', '#2aa874', '#a463e6', '#e0456f', '#2a9ab8'];
-function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object') deepMerge(a[k], b[k]); else a[k] = b[k]; } return a; }
-function styleChart(cfg) {
-  const pal = isDark() ? PAL_D : PAL_L, text = cssVar('--muted'), line = cssVar('--line'), surface = cssVar('--surface'), ink = cssVar('--text'), font = cssVar('--font');
-  const type = cfg.type || 'bar', round = ['pie', 'doughnut', 'polarArea'].includes(type), radial = round || type === 'radar';
-  cfg.data = cfg.data || { labels: [], datasets: [] };
-  const sets = cfg.data.datasets || [], multi = sets.length > 1;
-  sets.forEach((d, i) => {
-    const c = pal[i % pal.length];
-    if (round) { if (!d.backgroundColor) d.backgroundColor = (cfg.data.labels || []).map((_, k) => pal[k % pal.length]); d.borderColor = surface; d.borderWidth = 3; d.borderRadius = 8; d.hoverOffset = 8; d.spacing = 1; }
-    else if (type === 'bar') { d.backgroundColor = d.backgroundColor || c; d.borderRadius = d.borderRadius ?? { topLeft: 7, topRight: 7, bottomLeft: 0, bottomRight: 0 }; d.borderSkipped = 'bottom'; d.maxBarThickness = 44; d.categoryPercentage = .72; d.barPercentage = .86; d.borderWidth = 0; }
-    else { d.borderColor = d.borderColor || c; d.backgroundColor = d.backgroundColor || (d.fill ? c + '26' : c); d.borderWidth = 2.5; d.tension = d.tension ?? .35; d.pointRadius = d.pointRadius ?? 0; d.pointHoverRadius = 6; d.pointHoverBackgroundColor = c; d.pointHoverBorderColor = surface; d.pointHoverBorderWidth = 3; }
-  });
-  const base = {
-    responsive: true, maintainAspectRatio: false, layout: { padding: { top: 4, right: 4 } },
-    interaction: { mode: round ? 'nearest' : 'index', intersect: round },
-    animation: { duration: 1100, easing: 'easeOutQuart', delay: (ctx) => (ctx.type === 'data' && ctx.mode === 'default' && !round ? ctx.dataIndex * 70 + ctx.datasetIndex * 120 : 0) },
-    plugins: {
-      legend: { display: multi || round, position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, padding: 16, color: text, font: { family: font, size: 12.5 } } },
-      tooltip: { backgroundColor: surface, titleColor: ink, bodyColor: text, borderColor: line, borderWidth: 1, cornerRadius: 12, padding: 12, boxPadding: 5, usePointStyle: true, titleFont: { family: font, weight: '600', size: 13 }, bodyFont: { family: font, size: 13 }, displayColors: true, caretSize: 0 },
-    },
-    scales: radial ? undefined : {
-      x: { grid: { display: false }, border: { display: false }, ticks: { color: text, font: { family: font, size: 12 }, maxRotation: 0, autoSkipPadding: 12 } },
-      y: { beginAtZero: true, grid: { color: line, drawTicks: false }, border: { display: false }, ticks: { color: text, font: { family: font, size: 12 }, padding: 8, maxTicksLimit: 6 } },
-    },
-  };
-  if (type === 'doughnut') base.cutout = '68%';
-  cfg.options = deepMerge(base, cfg.options || {});
-  if (!radial && cfg.options.scales?.y2) delete cfg.options.scales.y2;   // jedna oś Y
-  return cfg;
-}
-
-function hydrate(host, { type, code }) {
-  host.className = 'widget';
-  try {
-    const J = () => JSON.parse(code);
-    if (type === 'chart') {
-      const cfg = J();
-      if (cfg.title) { const t = document.createElement('h4'); t.textContent = cfg.title; host.append(t); delete cfg.title; }
-      const wrap = document.createElement('div'); wrap.className = 'chart-wrap'; const cv = document.createElement('canvas'); wrap.append(cv); host.append(wrap);
-      const mount = () => new Chart(cv, styleChart(cfg));
-      if ('IntersectionObserver' in window) { const io = new IntersectionObserver((en) => { if (en.some((x) => x.isIntersecting)) { io.disconnect(); mount(); } }, { threshold: 0.2 }); io.observe(wrap); } else mount();
-    } else if (type === 'mermaid') {
-      const dk = isDark();
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', flowchart: { curve: 'basis', htmlLabels: true, padding: 14 },
-        themeVariables: { fontFamily: cssVar('--font') || 'system-ui', fontSize: '15px', background: 'transparent',
-          primaryColor: dk ? '#1f2c4a' : '#e6f0ff', primaryBorderColor: dk ? '#3d86f2' : '#0a6cf0', primaryTextColor: dk ? '#f5f5f7' : '#1d1d1f',
-          secondaryColor: dk ? '#2a2140' : '#f1e8fb', tertiaryColor: dk ? '#1c1c1e' : '#ffffff', lineColor: dk ? '#a1a1a6' : '#6e6e73', textColor: dk ? '#f5f5f7' : '#1d1d1f', edgeLabelBackground: dk ? '#1c1c1e' : '#ffffff' } });
-      mermaid.render('m' + uid(), code).then((r) => { host.innerHTML = r.svg; })
-        .catch(() => { host.innerHTML = '<span class="err">Nie udało się narysować schematu.</span><pre><code></code></pre>'; host.querySelector('code').textContent = code; });
-    } else if (type === 'timeline') {
-      const t = document.createElement('div'); t.className = 'timeline';
-      J().forEach((i) => { const d = document.createElement('div'); d.className = 'tl-item';
-        for (const [c, k] of [['tl-date', 'date'], ['tl-title', 'title'], ['tl-text', 'text']]) { const e = document.createElement('div'); e.className = c; e.textContent = i[k] || ''; d.append(e); }
-        t.append(d); });
-      host.append(t);
-    } else if (type === 'flashcards') {
-      const items = J(), g = document.createElement('div'); g.className = 'cards';
-      items.forEach((i) => { const c = document.createElement('div'); c.className = 'card';
-        c.innerHTML = '<div class="card-in"><div class="card-f"></div><div class="card-b"></div></div>';
-        c.querySelector('.card-f').textContent = i.q; c.querySelector('.card-b').textContent = i.a; c.onclick = () => c.classList.toggle('flip'); g.append(c); });
-      const save = document.createElement('button'); save.className = 'chip'; rich(save, '[[save]] Zapisz do nauki');
-      save.onclick = () => { saveDeck(items, current?.title); rich(save, '[[check]] Zapisano — otwórz Nauka'); };
-      host.append(g, save);
-    } else if (type === 'currency') { const { amount = 1, from, to } = J(); fxWidget(host, amount, from, to);
-    } else if (type === 'weather') { showWeather(host, J().city);
-    } else if (type === 'stock') { showStock(host, J().symbol);
-    } else if (type === 'map') { showMap(host, J().query);
-    } else if (type === 'slides') { slidesWidget(host, J()); }
-  } catch { host.className = ''; host.innerHTML = '<pre><code></code></pre>'; host.querySelector('code').textContent = code; }
-}
 
 /* ---------- strumień z /api/chat ---------- */
-function authHeaders() { return Object.assign({ 'content-type': 'application/json' }, settings.password ? { 'x-smiri-pass': settings.password } : {}); }
-async function smiriStream({ model, system, messages, search }, onText, onSource) {
-  const res = await fetch('/api/chat', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ model, system, messages, search }) });
+const authHeaders = () => Object.assign({ 'content-type': 'application/json' }, settings.password ? { 'x-smiri-pass': settings.password } : {});
+async function smiriStream(params, onText, ex = {}) {
+  const res = await fetch('/api/chat', { method: 'POST', headers: authHeaders(), signal: ex.signal, body: JSON.stringify({ effort: settings.effort, ...params }) });
   if (!res.ok) { let msg = res.status + ''; try { msg = (await res.json()).error || msg; } catch {} if (res.status === 401) openSettings(); throw new Error(msg); }
   const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '';
   for (;;) {
@@ -249,15 +200,17 @@ async function smiriStream({ model, system, messages, search }, onText, onSource
       if (!l.startsWith('data:')) continue;
       let j; try { j = JSON.parse(l.slice(5)); } catch { continue; }
       if (j.type === 'error') throw new Error(j.error?.message || 'Błąd');
-      if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') onText(j.delta.text);
-      if (j.type === 'content_block_start' && j.content_block?.type === 'web_search_tool_result' && Array.isArray(j.content_block.content) && onSource)
-        j.content_block.content.forEach((r) => r.url && onSource({ url: r.url, title: r.title }));
+      if (j.type === 'content_block_delta') {
+        if (j.delta?.type === 'text_delta') onText(j.delta.text);
+        else if (j.delta?.type === 'thinking_delta' && ex.onThink) ex.onThink(j.delta.thinking);
+      }
+      if (j.type === 'content_block_start' && j.content_block?.type === 'web_search_tool_result' && Array.isArray(j.content_block.content) && ex.onSource)
+        j.content_block.content.forEach((r) => r.url && ex.onSource({ url: r.url, title: r.title }));
     }
   }
 }
 window.smiriStream = smiriStream;
 
-/* ---------- wysyłanie ---------- */
 function apiMessages() {
   return current.messages.map((m) => {
     if (m.role === 'user' && m.files?.length) {
@@ -269,51 +222,86 @@ function apiMessages() {
     return { role: m.role, content: m.content };
   });
 }
+
+/* ---------- wysyłanie i odpowiedź ---------- */
+function setBusy(b) {
+  busy = b; const s = $('#sendBtn'); s.classList.toggle('stop', b); s.classList.remove('empty'); s.innerHTML = ''; s.append(ico(b ? 'stop' : 'up')); s.setAttribute('aria-label', b ? 'Zatrzymaj' : 'Wyślij'); if (!b) updateSend();
+  $('#voice .orb').classList.toggle('thinking', b);
+}
+function nearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 160; }
 async function send(text) {
   text = (text || '').trim();
   if ((!text && !pending.length) || busy) return;
   text = text || 'Przeanalizuj załączony plik.';
-  busy = true;
   if (!current) newChat();
   if (!current.messages.length) current.title = text.slice(0, 48);
   const um = { role: 'user', content: text, files: pending, attached: pending.map((f) => f.name) };
-  pending = []; renderAttachments();
-  current.messages.push(um);
-  const box = $('#messages'); $('#welcome')?.remove(); const urow = msgEl(um); urow.classList.add('enter'); box.append(urow);
-  const ai = { role: 'assistant', content: '', sources: [] };
-  const row = msgEl(ai); row.classList.add('streaming', 'enter'); row.querySelector('.body').innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; box.append(row); box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
-  $('#input').value = ''; autosize(); updateSend();
-  const orb = $('#voice .orb'); orb.classList.add('thinking');
-  const p = persona(current.personaId);
-  try {
-    let last = 0;
-    await smiriStream({
-      model: pickModel(p.model || settings.model), search: settings.search, messages: apiMessages(),
-      system: SYSTEM + (p.prompt ? `\n\n# Persona: ${p.name}\n${p.prompt}` : ''),
-    }, (d) => {
-      ai.content += d; const now = Date.now();
-      if (now - last > 80) { last = now; fillAi(row, ai, false); box.scrollTop = box.scrollHeight; }
-    }, (s) => { if (!ai.sources.find((x) => x.url === s.url)) ai.sources.push(s); });
-    if (!ai.content) ai.content = '_(pusta odpowiedź)_';
-    current.messages.push(ai); row.classList.remove('streaming'); fillAi(row, ai, true);
-    saveCurrent(); if (settings.speak || !$('#voice').hidden) speak(ai.content);
-  } catch (e) {
-    current.messages.pop(); row.classList.remove('streaming');
-    row.querySelector('.body').innerHTML = '<span class="err"></span>'; row.querySelector('.err').textContent = 'Błąd: ' + e.message;
-  } finally { busy = false; orb.classList.remove('thinking'); box.scrollTop = box.scrollHeight; }
+  pending = []; current.messages.push(um); $('#welcome')?.remove();
+  const box = $('#messages'); const urow = msgEl(um, current.messages.length - 1, true); urow.classList.add('enter'); box.append(urow);
+  $('#input').value = ''; autosize(); renderAttachments();
+  await runAssistant();
 }
-window.smiriAsk = (t) => { $('#input').value = t; $('#input').focus(); autosize(); };
+async function runAssistant() {
+  if (busy) return; const research = researchNext; researchNext = false; renderAttachments();
+  setBusy(true); abortCtl = new AbortController();
+  const box = $('#messages'), p = persona(current.personaId), mi = current.messages.length;
+  const ai = { role: 'assistant', content: '', sources: [] };
+  const row = msgEl(ai, mi, false); row.classList.add('streaming', 'enter'); row.querySelector('.body').innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; box.append(row);
+  box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+  let last = 0; const paint = () => { const now = Date.now(); if (now - last > 90) { last = now; const nb = nearBottom(box); fillAi(row, ai, false); if (nb) box.scrollTop = box.scrollHeight; } };
+  const finishAi = () => { current.messages.push(ai); row.classList.remove('streaming'); fillAi(row, ai, true); saveCurrent(); };
+  try {
+    await smiriStream({ model: pickModel(p.model || settings.model), search: settings.search, research, thinking: settings.showThinking, messages: apiMessages(), system: buildSystem(p, research) },
+      (d) => { ai.content += d; paint(); },
+      { signal: abortCtl.signal, onThink: (d) => { ai.thinking = (ai.thinking || '') + d; paint(); }, onSource: (s) => { if (!ai.sources.find((x) => x.url === s.url)) ai.sources.push(s); } });
+    if (!ai.content) ai.content = '_(pusta odpowiedź)_';
+    finishAi();
+    if (settings.speak || !$('#voice').hidden) speak(ai.content);
+    if (current.messages.length === 2 && !current.temp) autoTitle(current);
+  } catch (e) {
+    if (e.name === 'AbortError') { if (ai.content) finishAi(); else row.remove(); }
+    else {
+      row.classList.remove('streaming'); const b = row.querySelector('.body'); b.innerHTML = '';
+      const er = document.createElement('div'); er.className = 'err-box'; const t = document.createElement('span'); t.textContent = e.message || 'Nie udało się uzyskać odpowiedzi.'; er.append(t);
+      const r = document.createElement('button'); r.className = 'chip'; r.append(ico('refresh'), document.createTextNode('Spróbuj ponownie')); r.onclick = () => { row.remove(); runAssistant(); }; er.append(r); b.append(er);
+    }
+  } finally { abortCtl = null; setBusy(false); if (nearBottom(box)) box.scrollTop = box.scrollHeight; updateToBottom(); }
+}
+function stopGeneration() { if (abortCtl) abortCtl.abort(); }
+function regenerate() {
+  if (busy) return;
+  while (current.messages.length && current.messages.at(-1).role === 'assistant') current.messages.pop();
+  if (!current.messages.length) return; renderAll(); runAssistant();
+}
+function startEdit(row, m, mi) {
+  if (busy) return; const col = row.querySelector('.ucol'); col.innerHTML = '';
+  const ta = document.createElement('textarea'); ta.className = 'edit-ta'; ta.value = m.content; ta.rows = Math.min(8, Math.max(2, m.content.split('\n').length));
+  const bar = document.createElement('div'); bar.className = 'edit-bar';
+  const c = document.createElement('button'); c.className = 'btn-ghost'; c.textContent = 'Anuluj'; c.onclick = () => renderAll();
+  const s = document.createElement('button'); s.className = 'btn-primary'; s.textContent = 'Wyślij ponownie';
+  s.onclick = () => { const t = ta.value.trim(); if (!t) return; current.messages.splice(mi + 1); m.content = t; renderAll(); runAssistant(); };
+  bar.append(c, s); col.append(ta, bar); ta.focus();
+}
+async function autoTitle(c) {
+  try {
+    let t = ''; const first = c.messages[0].content.slice(0, 400);
+    await smiriStream({ model: 'claude-haiku-5-5', messages: [{ role: 'user', content: `Podaj bardzo krótki tytuł (maksymalnie 5 słów, bez cudzysłowów i kropki) dla rozmowy zaczynającej się od:\n${first}` }], search: false, effort: 'low' }, (d) => { t += d; });
+    t = t.trim().replace(/^["„]|["”]$/g, '').slice(0, 60); if (t) { c.title = t; persist(); renderList(); }
+  } catch { /* zostaje tytuł z pierwszej wiadomości */ }
+}
+window.smiriAsk = (t) => { $('#input').value = t; $('#input').focus(); autosize(); updateSend(); };
 
-/* ---------- załączniki ---------- */
+/* ---------- załączniki i tryby ---------- */
 function renderAttachments() {
   const el = $('#attachments'); el.innerHTML = '';
+  if (researchNext) { const c = document.createElement('span'); c.className = 'achip mode'; c.append(ico('globe'), document.createTextNode('Głębokie badanie')); const x = document.createElement('button'); x.setAttribute('aria-label', 'Wyłącz'); x.append(ico('close')); x.onclick = () => { researchNext = false; renderAttachments(); }; c.append(x); el.append(c); }
   pending.forEach((f, i) => { const c = document.createElement('span'); c.className = 'achip'; c.append(ico('clip'), document.createTextNode(f.name)); const x = document.createElement('button'); x.setAttribute('aria-label', 'Usuń'); x.append(ico('close')); x.onclick = () => { pending.splice(i, 1); renderAttachments(); }; c.append(x); el.append(c); });
   updateSend();
 }
-function updateSend() { $('#sendBtn').classList.toggle('empty', !$('#input').value.trim() && !pending.length); }
+function updateSend() { if (!busy) $('#sendBtn').classList.toggle('empty', !$('#input').value.trim() && !pending.length); }
 $('#file').onchange = async (e) => {
   for (const f of e.target.files) {
-    if (pending.reduce((s, x) => s + x.size, 0) + f.size > 3 * 1024 * 1024) { alert('Za duże pliki — maksymalnie ok. 3 MB łącznie.'); break; }
+    if (pending.reduce((s, x) => s + x.size, 0) + f.size > 3 * 1024 * 1024) { toast('Za duże pliki — maksymalnie ok. 3 MB łącznie'); break; }
     const data = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1]); fr.readAsDataURL(f); });
     pending.push({ name: f.name, type: f.type || 'text/plain', data, size: f.size });
   }
@@ -323,7 +311,7 @@ $('#file').onchange = async (e) => {
 /* ---------- eksport: Word i PDF ---------- */
 async function bodyForExport(row) {
   const clone = row.querySelector('.body').cloneNode(true);
-  clone.querySelector('.actions')?.remove(); clone.querySelector('.sources')?.remove();
+  clone.querySelectorAll('.actions,.sources,.followups,.cb-acts,.cb-out,.think').forEach((e) => e.remove());
   const src = [...row.querySelectorAll('.body canvas')], dst = [...clone.querySelectorAll('canvas')];
   src.forEach((c, i) => { const img = document.createElement('img'); img.src = c.toDataURL('image/png'); img.width = 560; dst[i].replaceWith(img); });
   const svgs = [...row.querySelectorAll('.body .widget svg')], svgd = [...clone.querySelectorAll('.widget svg')];
@@ -336,7 +324,7 @@ async function bodyForExport(row) {
       const out = document.createElement('img'); out.src = cv.toDataURL('image/png'); out.width = Math.min(560, r.width); svgd[i].replaceWith(out);
     } catch {}
   }
-  clone.querySelectorAll('iframe').forEach((f) => f.remove());
+  clone.querySelectorAll('iframe,.art-card').forEach((f) => f.remove());
   clone.querySelectorAll('.card-b').forEach((b) => { b.textContent = ' → ' + b.textContent; });
   return clone.innerHTML;
 }
@@ -346,7 +334,7 @@ async function exportWord(row) {
   a.download = (current.title || 'smiri').replace(/[^\w\- ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]/g, '') + '.doc'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 async function exportPdf(row) {
-  const w = window.open('', '_blank'); if (!w) { alert('Zezwól na wyskakujące okna, aby wyeksportować PDF.'); return; }
+  const w = window.open('', '_blank'); if (!w) { toast('Zezwól na wyskakujące okna, aby wyeksportować PDF'); return; }
   w.document.write(`<html><head><meta charset="utf-8"><title>${(current.title || 'Smiri').replace(/[<>]/g, '')}</title><style>body{font-family:-apple-system,Segoe UI,Arial;max-width:780px;margin:30px auto;line-height:1.55}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:4px 10px}pre{background:#f3f3f8;padding:10px;overflow:auto}.timeline{border-left:2px solid #7b6bff;padding-left:16px}.tl-item{margin:10px 0}</style></head><body>${await bodyForExport(row)}</body></html>`);
   w.document.close(); setTimeout(() => w.print(), 400);
 }
@@ -356,11 +344,11 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let wake = null, wakeOn = false, cmdRec = null;
 function speak(text) {
   if (!('speechSynthesis' in window)) return;
-  const t = text.replace(/```[\s\S]*?```/g, ' ').replace(/[#*_`>|]/g, ' ').slice(0, 1200);
+  const t = text.replace(/```[\s\S]*?```/g, ' ').replace(/~~~artifact[\s\S]*?~~~/g, ' ').replace(/[#*_`>|$]/g, ' ').slice(0, 1200);
   speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.lang = settings.lang; speechSynthesis.speak(u);
 }
 function listenOnce(onText, onPartial) {
-  if (!SR) { alert('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); return false; }
+  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); return false; }
   cmdRec = new SR(); cmdRec.lang = settings.lang; cmdRec.interimResults = true; let final = '';
   cmdRec.onresult = (e) => { let t = ''; for (const r of e.results) { t += r[0].transcript; if (r.isFinal) final = t; } onPartial && onPartial(t); };
   cmdRec.onend = () => { onText(final); cmdRec = null; }; cmdRec.start(); return true;
@@ -371,12 +359,9 @@ function openVoice() {
   const ok = listenOnce((t) => { if (t) { $('#voiceText').textContent = t; send(t); } else closeVoice(); }, (t) => { $('#voiceText').textContent = t; });
   if (!ok) closeVoice();
 }
-function closeVoice() {
-  $('#voice').hidden = true; if (cmdRec) try { cmdRec.abort(); } catch {}
-  speechSynthesis.cancel(); if (wakeOn) startWake();
-}
+function closeVoice() { $('#voice').hidden = true; if (cmdRec) try { cmdRec.abort(); } catch {} speechSynthesis.cancel(); if (wakeOn) startWake(); }
 function startWake() {
-  if (!SR) { alert('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); wakeOn = false; return; }
+  if (!SR) { toast('Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj Chrome lub Safari.'); wakeOn = false; $('#wakeBtn').classList.remove('on'); return; }
   wake = new SR(); wake.lang = settings.lang; wake.continuous = true; wake.interimResults = true;
   wake.onresult = (e) => {
     const t = [...e.results].slice(e.resultIndex).map((r) => r[0].transcript.toLowerCase()).join(' ');
@@ -385,12 +370,9 @@ function startWake() {
   wake.onend = () => { if (wakeOn && $('#voice').hidden) try { wake.start(); } catch {} };
   try { wake.start(); } catch {}
 }
-function toggleWake() {
-  wakeOn = !wakeOn; $('#wakeBtn').classList.toggle('on', wakeOn); 
-  if (wakeOn) startWake(); else if (wake) { wake.onend = null; try { wake.stop(); } catch {} }
-}
+function toggleWake() { wakeOn = !wakeOn; $('#wakeBtn').classList.toggle('on', wakeOn); if (wakeOn) startWake(); else if (wake) { wake.onend = null; try { wake.stop(); } catch {} } }
 
-/* ---------- persony (własne boty) ---------- */
+/* ---------- persony ---------- */
 let editing = null, pickedIcon = 'bot';
 function renderIconPick() {
   const box = $('#pIcons'); box.innerHTML = '';
@@ -398,7 +380,7 @@ function renderIconPick() {
 }
 function openPersona(p) {
   editing = p; pickedIcon = p ? pIcon(p) : 'bot'; renderIconPick();
-  $('#personaTitle').textContent = p ? (p.builtin ? 'Persona wbudowana (kopia do edycji)' : 'Edytuj bota') : 'Stwórz własny czat';
+  $('#personaTitle').textContent = p ? (p.builtin ? 'Kopia persony do edycji' : 'Edytuj bota') : 'Stwórz własny czat';
   $('#pName').value = p && !p.builtin ? p.name : (p ? p.name + ' (moja)' : ''); $('#pPrompt').value = p?.prompt || '';
   $('#pGreet').value = p?.greet || ''; $('#pModel').value = p?.model || ''; $('#pDelete').hidden = !p || p.builtin;
   $('#personaDlg').showModal();
@@ -406,76 +388,164 @@ function openPersona(p) {
 const personaData = () => ({ icon: pickedIcon, name: $('#pName').value.trim(), prompt: $('#pPrompt').value.trim(), greet: $('#pGreet').value.trim(), model: $('#pModel').value });
 $('#pSave').onclick = () => {
   const data = personaData(); if (!data.name) return;
-  let id;
-  if (editing && !editing.builtin) { Object.assign(editing, data); id = editing.id; } else { id = uid(); personas.push({ id, ...data }); }
+  let id; if (editing && !editing.builtin) { Object.assign(editing, data); id = editing.id; } else { id = uid(); personas.push({ id, ...data }); }
   store.set('smiri.personas', personas); renderPersonaSel(); $('#personaSel').value = id; newChat();
 };
 $('#pDelete').onclick = () => { if (editing && confirm('Usunąć tego bota?')) { personas = personas.filter((p) => p.id !== editing.id); store.set('smiri.personas', personas); renderPersonaSel(); $('#personaDlg').close(); newChat(); } };
-$('#pExport').onclick = () => navigator.clipboard.writeText(JSON.stringify(personaData(), null, 2));
+$('#pExport').onclick = () => { navigator.clipboard.writeText(JSON.stringify(personaData(), null, 2)); toast('Skopiowano JSON'); };
 $('#pImport').onclick = () => {
   const t = prompt('Wklej JSON persony:'); if (!t) return;
-  try { const d = JSON.parse(t); pickedIcon = ICON_NAMES.includes(d.icon) ? d.icon : 'bot'; renderIconPick(); $('#pName').value = d.name || ''; $('#pPrompt').value = d.prompt || ''; $('#pGreet').value = d.greet || ''; $('#pModel').value = d.model || ''; } catch { alert('Niepoprawny JSON.'); }
+  try { const d = JSON.parse(t); pickedIcon = ICON_NAMES.includes(d.icon) ? d.icon : 'bot'; renderIconPick(); $('#pName').value = d.name || ''; $('#pPrompt').value = d.prompt || ''; $('#pGreet').value = d.greet || ''; $('#pModel').value = d.model || ''; } catch { toast('Niepoprawny JSON'); }
 };
 $('#personaSel').onchange = () => newChat();
-function updatePersonaUI() {
-  const p = persona(current?.personaId || $('#personaSel').value || 'smiri');
-  const pi = $('#ppIcon'); pi.innerHTML = ''; pi.append(ico(pIcon(p))); $('#ppName').textContent = p.name;
+
+/* ---------- projekty ---------- */
+function saveProjects() { store.set('smiri.projects', projects); updateHeader(); }
+function openProjects(editId) {
+  const dlg = $('#projects'), body = $('#projBody'); body.innerHTML = '';
+  const title = $('#projTitle');
+  if (!editId) {
+    title.textContent = 'Projekty';
+    const intro = document.createElement('p'); intro.className = 'muted'; intro.textContent = 'Projekt to wspólne instrukcje i pliki dla serii rozmów. Smiri zna je w każdym czacie projektu.'; body.append(intro);
+    projects.forEach((pr) => { const r = document.createElement('button'); r.className = 'proj-row'; const t = document.createElement('span'); t.className = 'tile'; t.style.setProperty('--g', GRAD.blue); t.append(ico('folder')); const x = document.createElement('span'); x.innerHTML = '<b></b><small></small>'; x.querySelector('b').textContent = pr.name; x.querySelector('small').textContent = `${pr.files?.length || 0} plików · ${chats.filter((c) => c.projectId === pr.id).length} rozmów`; r.append(t, x, ico('chevron')); r.onclick = () => openProjects(pr.id); body.append(r); });
+    const nb = document.createElement('button'); nb.className = 'btn-primary'; nb.style.marginTop = '12px'; nb.append(ico('plus'), document.createTextNode('Nowy projekt')); nb.onclick = () => { const pr = { id: uid(), name: 'Nowy projekt', instructions: '', files: [] }; projects.push(pr); saveProjects(); openProjects(pr.id); }; body.append(nb);
+  } else {
+    const pr = project(editId); title.textContent = 'Projekt';
+    const f1 = document.createElement('div'); f1.className = 'field'; f1.innerHTML = '<label>Nazwa</label><input type="text">'; const ni = f1.querySelector('input'); ni.value = pr.name; ni.oninput = () => { pr.name = ni.value; saveProjects(); };
+    const f2 = document.createElement('div'); f2.className = 'field'; f2.innerHTML = '<label>Instrukcje projektu</label><textarea rows="6" placeholder="Np. Pomagasz mi pisać pracę magisterską z ekonomii. Odpowiadaj formalnie i cytuj źródła."></textarea>'; const ta = f2.querySelector('textarea'); ta.value = pr.instructions || ''; ta.oninput = () => { pr.instructions = ta.value; saveProjects(); };
+    const f3 = document.createElement('div'); f3.className = 'field'; f3.innerHTML = '<label>Wiedza projektu (pliki tekstowe)</label>';
+    const list = document.createElement('div'); const draw = () => { list.innerHTML = ''; (pr.files || []).forEach((f, i) => { const r = document.createElement('div'); r.className = 'list-item'; const d = document.createElement('div'); d.textContent = f.name; const sm = document.createElement('small'); sm.textContent = Math.round(f.text.length / 1000) + ' tys. znaków'; d.append(sm); const x = document.createElement('button'); x.className = 'x'; x.append(ico('close')); x.onclick = () => { pr.files.splice(i, 1); saveProjects(); draw(); }; r.append(d, x); list.append(r); }); };
+    const add = document.createElement('button'); add.className = 'btn-ghost'; add.append(ico('clip'), document.createTextNode('Dodaj plik')); const fi = document.createElement('input'); fi.type = 'file'; fi.multiple = true; fi.accept = '.txt,.md,.csv,.json,.html,.js,.py,.css,.xml,.yaml,.yml'; fi.hidden = true;
+    add.onclick = () => fi.click(); fi.onchange = async () => { pr.files = pr.files || []; for (const f of fi.files) { if (f.size > 400 * 1024) { toast(f.name + ' jest za duży (maks. 400 KB)'); continue; } pr.files.push({ name: f.name, text: await f.text() }); } saveProjects(); draw(); fi.value = ''; };
+    f3.append(list, add, fi); draw();
+    const act = document.createElement('div'); act.className = 'sheet-actions wrap';
+    const del = document.createElement('button'); del.className = 'btn-danger'; del.textContent = 'Usuń projekt'; del.onclick = () => { if (confirm('Usunąć projekt? Rozmowy zostaną, ale stracą kontekst projektu.')) { projects = projects.filter((p) => p.id !== pr.id); chats.forEach((c) => { if (c.projectId === pr.id) c.projectId = ''; }); if (current?.projectId === pr.id) current.projectId = ''; persist(); saveProjects(); openProjects(); } };
+    const g = document.createElement('span'); g.className = 'grp'; const back = document.createElement('button'); back.className = 'btn-ghost'; back.textContent = 'Wstecz'; back.onclick = () => openProjects();
+    const go = document.createElement('button'); go.className = 'btn-primary'; go.textContent = 'Nowy czat w projekcie'; go.onclick = () => { dlg.close(); newChat(false, pr.id); closeSidebar(); }; g.append(back, go); act.append(del, g);
+    body.append(f1, f2, f3, act);
+  }
+  if (!dlg.open) dlg.showModal();
 }
 
-/* ---------- ustawienia i UI ---------- */
-settings.model = pickModel(settings.model);
-function applyTheme() { if (settings.theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = settings.theme; }
-function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
-function isDark() { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
-function openSettings() { $('#theme').value = settings.theme; $('#model').value = settings.model; $('#password').value = settings.password; $('#lang').value = settings.lang; $('#speak').checked = settings.speak; if (!$('#settings').open) $('#settings').showModal(); }
-function autosize() { const t = $('#input'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 200) + 'px'; }
-function renderSearchBtn() { $('#searchBtn').classList.toggle('on', settings.search); $('#searchBtn').title = 'Wyszukiwanie w internecie: ' + (settings.search ? 'włączone' : 'wyłączone'); }
+/* ---------- pamięć ---------- */
+function saveMemory() { store.set('smiri.memory', memories); }
+function applyMemory(items) {
+  if (!settings.memoryOn || current?.temp) return;
+  items.forEach((t) => { t = t.trim(); if (!t || memories.some((m) => m.text.toLowerCase() === t.toLowerCase())) return; const m = { id: uid(), text: t, t: Date.now() }; memories.unshift(m); saveMemory(); toast('Zapamiętano: ' + t.slice(0, 70), 'Cofnij', () => { memories = memories.filter((x) => x.id !== m.id); saveMemory(); }); });
+}
+function renderMemoryList() {
+  const el = $('#memList'); el.innerHTML = '';
+  if (!memories.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'Smiri jeszcze nic o Tobie nie zapamiętał. Powiedz „zapamiętaj, że…”.'; el.append(p); return; }
+  memories.forEach((m) => { const r = document.createElement('div'); r.className = 'list-item'; const d = document.createElement('div'); d.textContent = m.text; const x = document.createElement('button'); x.className = 'x'; x.setAttribute('aria-label', 'Usuń'); x.append(ico('close')); x.onclick = () => { memories = memories.filter((k) => k.id !== m.id); saveMemory(); renderMemoryList(); }; r.append(d, x); el.append(r); });
+}
 
-const closeMenu = () => { $('#sidebar').classList.remove('open'); document.body.classList.remove('menu-open'); };
-$('#newChat').onclick = () => { newChat(false); closeMenu(); };
-$('#tempChat').onclick = () => { newChat(true); closeMenu(); };
+/* ---------- ustawienia ---------- */
+function applyTheme() { if (settings.theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = settings.theme; }
+function openSettings() {
+  $('#theme').value = settings.theme; $('#model').value = settings.model; $('#password').value = settings.password; $('#lang').value = settings.lang; $('#speak').checked = settings.speak;
+  $('#effort').value = settings.effort; $('#showThink').checked = settings.showThinking; $('#style').value = settings.style; $('#aboutMe').value = settings.aboutMe; $('#howRespond').value = settings.howRespond; $('#memOn').checked = settings.memoryOn;
+  renderMemoryList(); if (!$('#settings').open) $('#settings').showModal();
+}
+$('#saveSettings').onclick = () => {
+  settings = Object.assign(settings, { theme: $('#theme').value, model: pickModel($('#model').value), password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked, effort: $('#effort').value, showThinking: $('#showThink').checked, style: $('#style').value, aboutMe: $('#aboutMe').value, howRespond: $('#howRespond').value, memoryOn: $('#memOn').checked });
+  store.set('smiri.settings', settings); applyTheme();
+};
+$('#clearAll').onclick = () => { if (confirm('Usunąć całą historię rozmów?')) { chats = []; persist(); $('#settings').close(); newChat(); } };
+$('#clearMem').onclick = () => { if (confirm('Wyczyścić całą pamięć?')) { memories = []; saveMemory(); renderMemoryList(); } };
+function autosize() { const t = $('#input'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 180) + 'px'; }
+function renderSearchBtn() { $('#searchBtn').classList.toggle('on', settings.search); $('#searchBtn').title = 'Wyszukiwanie w internecie: ' + (settings.search ? 'włączone' : 'wyłączone'); }
+function closeSidebar() { $('#sidebar').classList.remove('open'); document.body.classList.remove('menu-open'); }
+
+/* ---------- paleta poleceń (Cmd/Ctrl + K) ---------- */
+let palSel = 0, palItems = [];
+function paletteActions() {
+  const A = [
+    { icon: 'plus', label: 'Nowy czat', fn: () => newChat(false) }, { icon: 'hourglass', label: 'Czat tymczasowy', fn: () => newChat(true) },
+    { icon: 'grid', label: 'Narzędzia', fn: () => $('#launcher').showModal() }, { icon: 'folder', label: 'Projekty', fn: () => openProjects() },
+    { icon: 'sliders', label: 'Ustawienia', fn: openSettings }, { icon: 'brain', label: 'Pamięć', fn: openSettings },
+    { icon: 'globe', label: settings.search ? 'Wyłącz wyszukiwanie w sieci' : 'Włącz wyszukiwanie w sieci', fn: () => $('#searchBtn').click() },
+    { icon: 'moon', label: 'Zmień motyw (jasny / ciemny)', fn: () => { settings.theme = isDark() ? 'light' : 'dark'; store.set('smiri.settings', settings); applyTheme(); } },
+  ];
+  allPersonas().forEach((p) => A.push({ icon: pIcon(p), label: 'Persona: ' + p.name, fn: () => { $('#personaSel').value = p.id; newChat(); } }));
+  TILES.forEach(([k, ic, label]) => A.push({ icon: ic, label: 'Narzędzie: ' + label, fn: () => openPanel(k) }));
+  return A;
+}
+function openPalette() { const p = $('#palette'); p.hidden = false; const i = $('#palInput'); i.value = ''; paletteDraw(''); setTimeout(() => i.focus(), 30); }
+function closePalette() { $('#palette').hidden = true; }
+function paletteDraw(q) {
+  q = q.trim().toLowerCase(); const list = $('#palList'); list.innerHTML = ''; palItems = [];
+  const acts = paletteActions().filter((a) => !q || a.label.toLowerCase().includes(q)).slice(0, q ? 8 : 9);
+  const found = q ? chats.filter((c) => chatText(c).includes(q)).slice(0, 8).map((c) => ({ icon: 'search', label: c.title, sub: 'Rozmowa', fn: () => openChat(c.id) })) : chats.slice(0, 4).map((c) => ({ icon: 'search', label: c.title, sub: 'Ostatnia rozmowa', fn: () => openChat(c.id) }));
+  const ask = q ? [{ icon: 'spark', label: `Zapytaj Smiri: „${$('#palInput').value.trim()}”`, fn: () => send($('#palInput').value.trim()) }] : [];
+  [['', ask], ['Rozmowy', found], ['Polecenia', acts]].forEach(([h, arr]) => {
+    if (!arr.length) return; if (h) { const d = document.createElement('div'); d.className = 'pal-head'; d.textContent = h; list.append(d); }
+    arr.forEach((it) => { const i = palItems.length; palItems.push(it); const b = document.createElement('button'); b.className = 'pal-item' + (i === palSel ? ' sel' : ''); b.append(ico(it.icon)); const t = document.createElement('span'); t.textContent = it.label; if (it.sub) { const sm = document.createElement('small'); sm.textContent = it.sub; t.append(sm); } b.append(t); b.onmouseenter = () => { palSel = i; paletteMark(); }; b.onclick = () => { closePalette(); it.fn(); }; list.append(b); });
+  });
+  palSel = 0; paletteMark();
+}
+function paletteMark() { const els = document.querySelectorAll('#palList .pal-item'); els.forEach((e, i) => e.classList.toggle('sel', i === palSel)); els[palSel]?.scrollIntoView({ block: 'nearest' }); }
+$('#palInput').addEventListener('input', (e) => paletteDraw(e.target.value));
+$('#palInput').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); palSel = Math.min(palItems.length - 1, palSel + 1); paletteMark(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); palSel = Math.max(0, palSel - 1); paletteMark(); }
+  else if (e.key === 'Enter') { e.preventDefault(); const it = palItems[palSel]; if (it) { closePalette(); it.fn(); } }
+});
+$('#palette').addEventListener('click', (e) => { if (e.target.id === 'palette') closePalette(); });
+
+/* ---------- przewijanie ---------- */
+function updateToBottom() { const b = $('#messages'); $('#toBottom').hidden = b.scrollHeight - b.scrollTop - b.clientHeight < 240; }
+$('#messages').addEventListener('scroll', updateToBottom, { passive: true });
+$('#toBottom').onclick = () => $('#messages').scrollTo({ top: $('#messages').scrollHeight, behavior: 'smooth' });
+
+/* ---------- zdarzenia interfejsu ---------- */
+$('#newChat').onclick = () => { newChat(false); closeSidebar(); };
+$('#tempChat').onclick = () => { newChat(true); closeSidebar(); };
 $('#newTop').onclick = () => newChat(false);
-$('#settingsBtn').onclick = () => { closeMenu(); openSettings(); };
-$('#toolsBtn').onclick = () => { closeMenu(); $('#launcher').showModal(); };
+$('#settingsBtn').onclick = () => { closeSidebar(); openSettings(); };
+$('#toolsBtn').onclick = () => { closeSidebar(); $('#launcher').showModal(); };
+$('#projBtn').onclick = () => { closeSidebar(); openProjects(); };
 $('#menuBtn').onclick = () => { $('#sidebar').classList.add('open'); document.body.classList.add('menu-open'); };
-$('#sbClose').onclick = closeMenu; $('#scrim').onclick = closeMenu;
-$('#sendBtn').onclick = () => send($('#input').value);
+$('#sbClose').onclick = closeSidebar; $('#scrim').onclick = closeSidebar;
+$('#sendBtn').onclick = () => (busy ? stopGeneration() : send($('#input').value));
 $('#micBtn').onclick = openVoice; $('#voiceClose').onclick = closeVoice; $('#wakeBtn').onclick = toggleWake;
 $('#searchBtn').onclick = () => { settings.search = !settings.search; store.set('smiri.settings', settings); renderSearchBtn(); };
+$('#projBadge').onclick = (e) => { e.stopPropagation(); $('#personaPill').click(); };
+$('#chatSearch').addEventListener('input', (e) => { chatQuery = e.target.value; renderList(); });
 $('#input').addEventListener('input', () => { autosize(); updateSend(); });
-$('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); send($('#input').value); } });
+$('#input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) { e.preventDefault(); if (!busy) send($('#input').value); } });
 document.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#input').focus(); }
-  if (e.key === 'Escape') { if (!$('#voice').hidden) closeVoice(); closePopovers(); }
+  const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
+  if (mod && k === 'k') { e.preventDefault(); $('#palette').hidden ? openPalette() : closePalette(); }
+  else if (mod && e.shiftKey && k === 'o') { e.preventDefault(); newChat(false); $('#input').focus(); }
+  else if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && $('#palette').hidden) { e.preventDefault(); $('#input').focus(); }
+  if (e.key === 'Escape') { if (!$('#palette').hidden) closePalette(); else if (!$('#voice').hidden) closeVoice(); else if (document.body.classList.contains('art-open') && !document.querySelector('dialog[open]')) closeArtifact(); closeMenu(); }
 });
-$('#saveSettings').onclick = () => { settings = Object.assign(settings, { theme: $('#theme').value, model: $('#model').value, password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked }); store.set('smiri.settings', settings); applyTheme(); };
-$('#clearAll').onclick = () => { if (confirm('Usunąć całą historię?')) { chats = []; persist(); $('#settings').close(); newChat(); } };
 document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (e) => { if (e.target === d) d.close(); }));
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => b.closest('dialog').close()));
 
-/* ---------- menu podręczne (popover) ---------- */
-function closePopovers() { ['#plusMenu', '#personaMenu'].forEach((id) => { $(id).hidden = true; }); $('#plusBtn').setAttribute('aria-expanded', 'false'); $('#personaPill').setAttribute('aria-expanded', 'false'); }
-function popItem(iconName, label, sub, fn, sel) {
-  const b = document.createElement('button'); b.className = 'pop-item' + (sel ? ' sel' : ''); b.append(ico(iconName));
-  const t = document.createElement('span'); t.textContent = label; if (sub) { const sm = document.createElement('small'); sm.textContent = sub; t.append(sm); } b.append(t);
-  b.onclick = () => { closePopovers(); fn(); }; return b;
-}
-function sep() { const d = document.createElement('div'); d.className = 'pop-sep'; return d; }
 $('#plusBtn').onclick = (e) => {
-  e.stopPropagation(); const m = $('#plusMenu'); if (!m.hidden) return closePopovers(); closePopovers(); m.innerHTML = '';
-  m.append(popItem('clip', 'Dodaj plik lub zdjęcie', 'Obraz, PDF, tekst', () => $('#file').click()), sep());
-  PLUS_ITEMS.forEach((o) => m.append(popItem(o.icon, o.label, '', () => { if (o.send) send(o.send); else { $('#input').value = o.pre; $('#input').focus(); autosize(); updateSend(); } })));
-  const r = $('.box').getBoundingClientRect(); m.style.left = r.left + 'px'; m.style.top = 'auto'; m.style.bottom = (innerHeight - r.top + 10) + 'px'; m.style.setProperty('--ox', '0'); m.style.setProperty('--oy', '100%');
-  m.hidden = false; $('#plusBtn').setAttribute('aria-expanded', 'true');
+  e.stopPropagation(); if (openMenu.anchor === e.currentTarget && !$('#pop').hidden) return closeMenu();
+  openMenu(e.currentTarget, [
+    { icon: 'clip', label: 'Dodaj plik lub zdjęcie', sub: 'Obraz, PDF, tekst, CSV', fn: () => $('#file').click() },
+    { icon: 'globe', label: 'Głębokie badanie', sub: 'Wiele wyszukiwań i raport ze źródłami', check: researchNext, keep: true, fn: () => { researchNext = !researchNext; renderAttachments(); closeMenu(); } },
+    { icon: 'bulb', label: 'Pokazuj tok rozumowania', sub: 'Podgląd myślenia modelu', check: settings.showThinking, keep: true, fn: () => { settings.showThinking = !settings.showThinking; store.set('smiri.settings', settings); closeMenu(); toast(settings.showThinking ? 'Tok rozumowania włączony' : 'Tok rozumowania wyłączony'); } },
+    'sep', { header: 'Szybkie polecenia' },
+    ...PLUS_ITEMS.map((o) => ({ icon: o.icon, label: o.label, fn: () => { if (o.send) send(o.send); else { $('#input').value = o.pre; $('#input').focus(); autosize(); updateSend(); } } })),
+  ], { up: true });
 };
 $('#personaPill').onclick = (e) => {
-  e.stopPropagation(); const m = $('#personaMenu'); if (!m.hidden) return closePopovers(); closePopovers(); m.innerHTML = '';
-  allPersonas().forEach((p) => m.append(popItem(pIcon(p), p.name, '', () => { $('#personaSel').value = p.id; newChat(); }, p.id === ($('#personaSel').value || 'smiri'))));
-  m.append(sep(), popItem('plus', 'Stwórz własnego bota', '', () => openPersona(null)), popItem('pencil', 'Edytuj tego bota', '', () => openPersona(persona($('#personaSel').value))));
-  const r = $('#personaPill').getBoundingClientRect(); m.style.left = r.left + 'px'; m.style.bottom = 'auto'; m.style.top = (r.bottom + 8) + 'px'; m.style.setProperty('--ox', '0'); m.style.setProperty('--oy', '0');
-  m.hidden = false; $('#personaPill').setAttribute('aria-expanded', 'true');
+  e.stopPropagation(); if (openMenu.anchor === $('#personaPill') && !$('#pop').hidden) return closeMenu();
+  const cur = $('#personaSel').value || 'smiri';
+  openMenu($('#personaPill'), [
+    { header: 'Persona' },
+    ...allPersonas().map((p) => ({ icon: pIcon(p), label: p.name, sel: p.id === cur, fn: () => { $('#personaSel').value = p.id; newChat(); } })),
+    'sep', { header: 'Projekt' },
+    { icon: 'folder', label: 'Bez projektu', sel: !current?.projectId, fn: () => { current.projectId = ''; saveCurrent(); updateHeader(); if (!current.messages.length) renderAll(); } },
+    ...projects.map((pr) => ({ icon: 'folder', label: pr.name, sel: current?.projectId === pr.id, fn: () => { current.projectId = pr.id; saveCurrent(); updateHeader(); if (!current.messages.length) renderAll(); } })),
+    { icon: 'sliders', label: 'Zarządzaj projektami…', fn: () => openProjects() },
+    'sep', { icon: 'plus', label: 'Stwórz własnego bota', fn: () => openPersona(null) }, { icon: 'pencil', label: 'Edytuj tego bota', fn: () => openPersona(persona(cur)) },
+  ]);
 };
-document.addEventListener('click', (e) => { if (!e.target.closest('.popover')) closePopovers(); });
 
 /* klawiatura na telefonie: dopasuj wysokość do widocznego obszaru */
 if (window.visualViewport) {
