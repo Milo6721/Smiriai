@@ -633,7 +633,7 @@ function updateUser() {
   $('#avatar').textContent = n ? n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() : 'G';
 }
 const EFFORT_L = { low: 'Szybko', medium: 'Średnio', high: 'Dokładnie' };
-function renderModel() { const l = $('#modelLbl'); l.textContent = ''; const b = document.createElement('b'); b.textContent = pickModel(settings.model) === 'claude-haiku-5-5' ? 'Haiku 5.5' : 'Sonnet 5.5'; const e = document.createElement('span'); e.className = 'eff'; e.textContent = ' · ' + (EFFORT_L[settings.effort] || 'Średnio'); l.append(b, e); }
+function renderModel() { const l = $('#modelLbl'); l.textContent = ''; const b = document.createElement('b'); const hk = pickModel(settings.model) === 'claude-haiku-5-5'; b.textContent = hk ? 'Haiku' : 'Sonnet'; const v = document.createElement('i'); v.className = 'ver'; v.textContent = ' 5.5'; b.append(v); const e = document.createElement('span'); e.className = 'eff'; e.textContent = ' · ' + (EFFORT_L[settings.effort] || 'Średnio'); l.append(b, e); }
 function saveSet() { store.set('smiri.settings', settings); renderModel(); }
 $('#modelBtn').onclick = (e) => {
   e.stopPropagation(); if (openMenu.anchor === e.currentTarget && !$('#pop').hidden) return closeMenu();

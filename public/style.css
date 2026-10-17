@@ -776,3 +776,17 @@ body.working #waves{opacity:.55}
 .gen .gt small{font-size:12.5px;opacity:.8}
 .msg.streaming .body>*:last-child::after{content:none!important}
 @media (prefers-reduced-motion:reduce){.gen *{animation:none!important}}
+
+/* telefon: pole pisania */
+.model-btn .ver{font-style:normal}
+@media (max-width:520px){
+  .box{background:var(--lg-sheet,var(--surface));padding:10px 8px 8px 12px;border-radius:28px}
+  .box #input{font-size:16px;line-height:1.4;padding:4px 4px 6px;min-height:24px}
+  .box-row{gap:0;width:100%}
+  .model-btn .ver{display:none}.model-btn{padding:6px 6px;font-size:13px}
+  .seg.mode{padding:2px}.seg.mode button{padding:4px 7px;font-size:12px}
+  .cbtn{width:32px;height:32px}.send{width:36px;height:36px}
+  #composer{padding:4px 8px calc(6px + var(--safe-b))}
+  .hint{display:none}
+}
+@media (max-width:520px){#composer{background:linear-gradient(transparent,var(--bg) 22px)}}
