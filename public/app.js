@@ -7,7 +7,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v, (key, val) => (key === 'files' || key === '_mem' || key === '_artOpened' ? undefined : val))); } catch {} },
 };
 
-let settings = Object.assign({ theme: 'dark', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true }, store.get('smiri.settings', {}));
+let settings = Object.assign({ theme: 'dark', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true, accent: 'auto', fsize: 'm', haptics: true, convo: false }, store.get('smiri.settings', {}));
 let chats = store.get('smiri.chats', []);
 let memories = store.get('smiri.memory', []);
 let projects = store.get('smiri.projects', []);
@@ -184,6 +184,7 @@ function welcomeEl(p) {
     c.append(tile, tx); c.onclick = () => { if (o.p.startsWith('__research__')) { researchNext = true; renderAttachments(); send(o.p.slice(12)); } else send(o.p); }; w.querySelector('.sugg-grid').append(c);
   });
   else w.querySelector('.sugg-grid').remove();
+  if (p.id === 'smiri' && !pr && window.buildToday) w.querySelector('p').after(buildToday());
   return w;
 }
 
@@ -237,7 +238,7 @@ async function send(text) {
   if (!current) newChat();
   if (!current.messages.length) current.title = text.slice(0, 48);
   const um = { role: 'user', content: text, files: pending, attached: pending.map((f) => f.name) };
-  pending = []; current.messages.push(um); $('#welcome')?.remove();
+  pending = []; current.messages.push(um); $('#welcome')?.remove(); haptic(10);
   const box = $('#messages'); const urow = msgEl(um, current.messages.length - 1, true); urow.classList.add('enter'); box.append(urow);
   $('#input').value = ''; autosize(); renderAttachments();
   await runAssistant();
@@ -268,7 +269,7 @@ async function runAssistant() {
     }
   } finally { abortCtl = null; setBusy(false); if (nearBottom(box)) box.scrollTop = box.scrollHeight; updateToBottom(); }
 }
-function stopGeneration() { if (abortCtl) abortCtl.abort(); }
+function stopGeneration() { if (abortCtl) { abortCtl.abort(); haptic(14); } }
 function regenerate() {
   if (busy) return;
   while (current.messages.length && current.messages.at(-1).role === 'assistant') current.messages.pop();
@@ -300,14 +301,17 @@ function renderAttachments() {
   updateSend();
 }
 function updateSend() { if (!busy) $('#sendBtn').classList.toggle('empty', !$('#input').value.trim() && !pending.length); }
-$('#file').onchange = async (e) => {
-  for (const f of e.target.files) {
-    if (pending.reduce((s, x) => s + x.size, 0) + f.size > 3 * 1024 * 1024) { toast('Za duże pliki — maksymalnie ok. 3 MB łącznie'); break; }
+async function addFiles(list) {
+  for (const f of list) {
+    if (pending.reduce((n, x) => n + x.size, 0) + f.size > 3 * 1024 * 1024) { toast('Za duże pliki — maksymalnie ok. 3 MB łącznie'); break; }
     const data = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(',')[1]); fr.readAsDataURL(f); });
-    pending.push({ name: f.name, type: f.type || 'text/plain', data, size: f.size });
+    pending.push({ name: f.name || 'obraz.png', type: f.type || 'text/plain', data, size: f.size });
   }
-  e.target.value = ''; renderAttachments();
-};
+  renderAttachments(); haptic(8);
+  if (window.__dataPrompt) { window.__dataPrompt = false; if (!$('#input').value.trim()) smiriAsk('Przeanalizuj załączone dane: policz podstawowe statystyki, wskaż ciekawe zależności i pokaż wykresy. '); }
+}
+$('#file').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
+$('#fileCam').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
 
 /* ---------- eksport: Word i PDF ---------- */
 async function bodyForExport(row) {
@@ -352,7 +356,7 @@ function speak(text) {
   const t = text.replace(/```[\s\S]*?```/g, ' ').replace(/~~~artifact[\s\S]*?~~~/g, ' ').replace(/[#*_`>|$]/g, ' ').slice(0, 1200);
   speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.lang = settings.lang;
   u.onstart = () => { speaking = true; };
-  u.onend = u.onerror = () => { speaking = false; if (!$('#voice').hidden && !busy) setTimeout(() => { if (!speaking && !busy) closeVoice(); }, 1400); };
+  u.onend = u.onerror = () => { speaking = false; if ($('#voice').hidden || busy) return; if (settings.convo) setTimeout(() => { if (!speaking && !busy && !$('#voice').hidden) { vmode = 'cmd'; showVoice(); startRec(); } }, 350); else setTimeout(() => { if (!speaking && !busy) closeVoice(); }, 1400); };
   speechSynthesis.speak(u);
 }
 const voiceStatus = (t) => { $('#voiceText').textContent = t; };
@@ -483,15 +487,30 @@ function renderMemoryList() {
 }
 
 /* ---------- ustawienia ---------- */
+const ACCENTS = { auto: null, purple: '#bf5af2', pink: '#ff2d78', orange: '#ff8a00', green: '#2fb457', gray: '#8e8e93' };
+const FSIZE = { s: 0.92, m: 1, l: 1.12 };
+function applyLook() {
+  const r = document.documentElement.style, c = ACCENTS[settings.accent];
+  if (c) r.setProperty('--accent', c); else r.removeProperty('--accent');
+  r.setProperty('--fs', FSIZE[settings.fsize] || 1);
+}
+function renderSwatches() {
+  const box = $('#accentPick'); box.innerHTML = '';
+  Object.entries({ auto: '#0a84ff', purple: ACCENTS.purple, pink: ACCENTS.pink, orange: ACCENTS.orange, green: ACCENTS.green, gray: ACCENTS.gray }).forEach(([k, col]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'sw' + (settings.accent === k ? ' sel' : ''); b.style.background = col; b.setAttribute('aria-label', k);
+    b.onclick = () => { settings.accent = k; applyLook(); renderSwatches(); }; box.append(b);
+  });
+}
 function applyTheme() { if (settings.theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = settings.theme; const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = isDark() ? '#000000' : '#f5f5f7'; }
 function openSettings() {
   $('#theme').value = settings.theme; $('#model').value = settings.model; $('#password').value = settings.password; $('#lang').value = settings.lang; $('#speak').checked = settings.speak;
   $('#effort').value = settings.effort; $('#showThink').checked = settings.showThinking; $('#style').value = settings.style; $('#aboutMe').value = settings.aboutMe; $('#howRespond').value = settings.howRespond; $('#memOn').checked = settings.memoryOn;
+  $('#fsize').value = settings.fsize; $('#haptics').checked = settings.haptics !== false; $('#convo').checked = !!settings.convo; renderSwatches();
   renderMemoryList(); if (!$('#settings').open) $('#settings').showModal();
 }
 $('#saveSettings').onclick = () => {
-  settings = Object.assign(settings, { theme: $('#theme').value, model: pickModel($('#model').value), password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked, effort: $('#effort').value, showThinking: $('#showThink').checked, style: $('#style').value, aboutMe: $('#aboutMe').value, howRespond: $('#howRespond').value, memoryOn: $('#memOn').checked });
-  settings.themeSet = true; store.set('smiri.settings', settings); applyTheme();
+  settings = Object.assign(settings, { theme: $('#theme').value, model: pickModel($('#model').value), password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked, effort: $('#effort').value, showThinking: $('#showThink').checked, style: $('#style').value, aboutMe: $('#aboutMe').value, howRespond: $('#howRespond').value, memoryOn: $('#memOn').checked, fsize: $('#fsize').value, haptics: $('#haptics').checked, convo: $('#convo').checked });
+  settings.themeSet = true; applyLook(); store.set('smiri.settings', settings); applyTheme();
 };
 $('#clearAll').onclick = () => { if (confirm('Usunąć całą historię rozmów?')) { chats = []; persist(); $('#settings').close(); newChat(); } };
 $('#clearMem').onclick = () => { if (confirm('Wyczyścić całą pamięć?')) { memories = []; saveMemory(); renderMemoryList(); } };
@@ -550,7 +569,10 @@ $('#projBtn').onclick = () => { closeSidebar(); openProjects(); };
 $('#menuBtn').onclick = () => { $('#sidebar').classList.add('open'); document.body.classList.add('menu-open'); };
 $('#sbClose').onclick = closeSidebar; $('#scrim').onclick = closeSidebar;
 $('#sendBtn').onclick = () => (busy ? stopGeneration() : send($('#input').value));
-$('#micBtn').onclick = openVoice; $('#voiceClose').onclick = closeVoice; $('#wakeBtn').onclick = toggleWake;
+$('#micBtn').onclick = openVoice; $('#voiceClose').onclick = closeVoice;
+function renderConvo() { $('#convoBtn').classList.toggle('on', !!settings.convo); $('#convoBtn').lastChild.textContent = ' Rozmowa ciągła: ' + (settings.convo ? 'wł.' : 'wył.'); }
+$('#convoBtn').onclick = () => { settings.convo = !settings.convo; store.set('smiri.settings', settings); renderConvo(); haptic(8); };
+renderConvo(); $('#wakeBtn').onclick = toggleWake;
 $('#searchBtn').onclick = () => { settings.search = !settings.search; store.set('smiri.settings', settings); renderSearchBtn(); };
 $('#projBadge').onclick = (e) => { e.stopPropagation(); $('#personaPill').click(); };
 $('#chatSearch').addEventListener('input', (e) => { chatQuery = e.target.value; renderList(); });
@@ -570,6 +592,8 @@ $('#plusBtn').onclick = (e) => {
   e.stopPropagation(); if (openMenu.anchor === e.currentTarget && !$('#pop').hidden) return closeMenu();
   openMenu(e.currentTarget, [
     { icon: 'clip', label: 'Dodaj plik lub zdjęcie', sub: 'Obraz, PDF, tekst, CSV', fn: () => $('#file').click() },
+    ...(matchMedia('(pointer: coarse)').matches ? [{ icon: 'image', label: 'Zrób zdjęcie', sub: 'Użyj aparatu', fn: () => $('#fileCam').click() }] : []),
+    { icon: 'chartbar', label: 'Analiza danych', sub: 'Wgraj CSV, a Smiri policzy i narysuje', fn: () => { window.__dataPrompt = true; $('#file').click(); } },
     { icon: 'globe', label: 'Głębokie badanie', sub: 'Wiele wyszukiwań i raport ze źródłami', check: researchNext, keep: true, fn: () => { researchNext = !researchNext; renderAttachments(); closeMenu(); } },
     { icon: 'bulb', label: 'Pokazuj tok rozumowania', sub: 'Podgląd myślenia modelu', check: settings.showThinking, keep: true, fn: () => { settings.showThinking = !settings.showThinking; store.set('smiri.settings', settings); closeMenu(); toast(settings.showThinking ? 'Tok rozumowania włączony' : 'Tok rozumowania wyłączony'); } },
     'sep', { header: 'Szybkie polecenia' },
@@ -596,4 +620,4 @@ if (window.visualViewport) {
   visualViewport.addEventListener('resize', fit); fit();
 }
 
-hydrateIcons(); applyTheme(); renderPersonaSel(); renderSearchBtn(); newChat();
+hydrateIcons(); applyTheme(); applyLook(); renderPersonaSel(); renderSearchBtn(); newChat();
