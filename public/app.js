@@ -7,12 +7,12 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v, (key, val) => (key === 'files' || key === '_mem' || key === '_artOpened' ? undefined : val))); } catch {} },
 };
 
-let settings = Object.assign({ theme: 'dark', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true, accent: 'auto', fsize: 'm', haptics: true, convo: false }, store.get('smiri.settings', {}));
+let settings = Object.assign({ theme: 'dark', model: 'claude-sonnet-5-5', password: '', lang: 'pl-PL', speak: false, search: true, effort: 'medium', showThinking: false, style: 'default', aboutMe: '', howRespond: '', memoryOn: true, accent: 'auto', fsize: 'm', haptics: true, convo: false, name: '' }, store.get('smiri.settings', {}));
 let chats = store.get('smiri.chats', []);
 let memories = store.get('smiri.memory', []);
 let projects = store.get('smiri.projects', []);
 let personas = store.get('smiri.personas', []);
-let current = null, busy = false, pending = [], abortCtl = null, researchNext = false, chatQuery = '';
+let current = null, busy = false, pending = [], abortCtl = null, researchNext = false, researchSticky = false, chatQuery = '';
 
 const OK_MODELS = ['claude-sonnet-5-5', 'claude-haiku-5-5'];
 const pickModel = (m) => (OK_MODELS.includes(m) ? m : 'claude-sonnet-5-5');
@@ -175,7 +175,7 @@ function welcomeEl(p) {
   const w = document.createElement('div'); w.id = 'welcome';
   const pr = current?.projectId && project(current.projectId);
   w.innerHTML = `<div class="orb big"></div><h1></h1><p></p><div class="sugg-grid"></div>`;
-  w.querySelector('h1').textContent = p.id === 'smiri' ? (pr ? pr.name : 'Cześć, jestem Smiri') : p.name;
+  w.querySelector('h1').textContent = p.id === 'smiri' ? (pr ? pr.name : (settings.name ? `Cześć, ${settings.name}` : 'Cześć, jestem Smiri')) : p.name;
   w.querySelector('p').textContent = pr ? 'Rozmowa w projekcie. Smiri zna jego instrukcje i pliki.' : p.id === 'smiri' ? 'Pytaj o cokolwiek. Rysuję wykresy, buduję strony i aplikacje, szukam w sieci i uruchamiam kod.' : (p.greet || 'Napisz, w czym mogę pomóc.');
   if (p.id === 'smiri' && !pr) STARTERS.forEach((o, i) => {
     const c = document.createElement('button'); c.className = 'sugg'; c.style.setProperty('--i', i);
@@ -227,7 +227,7 @@ function apiMessages() {
 
 /* ---------- wysyłanie i odpowiedź ---------- */
 function setBusy(b) {
-  busy = b; const s = $('#sendBtn'); s.classList.toggle('stop', b); s.classList.remove('empty'); s.innerHTML = ''; s.append(ico(b ? 'stop' : 'up')); s.setAttribute('aria-label', b ? 'Zatrzymaj' : 'Wyślij'); if (!b) updateSend();
+  busy = b; document.body.classList.toggle('working', b); const s = $('#sendBtn'); s.classList.toggle('stop', b); s.classList.remove('empty'); s.innerHTML = ''; s.append(ico(b ? 'stop' : 'up')); s.setAttribute('aria-label', b ? 'Zatrzymaj' : 'Wyślij'); if (!b) updateSend();
   $('#voice .orb').classList.toggle('thinking', b);
 }
 function nearBottom(box) { return box.scrollHeight - box.scrollTop - box.clientHeight < 160; }
@@ -244,11 +244,11 @@ async function send(text) {
   await runAssistant();
 }
 async function runAssistant() {
-  if (busy) return; const research = researchNext; researchNext = false; renderAttachments();
+  if (busy) return; const research = researchNext; if (!researchSticky) researchNext = false; renderAttachments();
   setBusy(true); abortCtl = new AbortController();
   const box = $('#messages'), p = persona(current.personaId), mi = current.messages.length;
   const ai = { role: 'assistant', content: '', sources: [] };
-  const row = msgEl(ai, mi, false); row.classList.add('streaming', 'enter'); row.querySelector('.body').innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; box.append(row);
+  const row = msgEl(ai, mi, false); row.classList.add('streaming', 'enter'); setStatus(row, 'Myślę…'); box.append(row);
   box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
   let last = 0; const paint = () => { const now = Date.now(); if (now - last > 90) { last = now; const nb = nearBottom(box); fillAi(row, ai, false); if (nb) box.scrollTop = box.scrollHeight; } };
   const finishAi = () => { current.messages.push(ai); row.classList.remove('streaming'); fillAi(row, ai, true); saveCurrent(); };
@@ -263,7 +263,7 @@ async function runAssistant() {
   } catch (e) {
     if (e.name === 'AbortError') { if (ai.content) finishAi(); else row.remove(); }
     else {
-      row.classList.remove('streaming'); const b = row.querySelector('.body'); b.innerHTML = '';
+      row.classList.remove('streaming'); setStatus(row, null); const b = row.querySelector('.body'); b.innerHTML = '';
       const er = document.createElement('div'); er.className = 'err-box'; const t = document.createElement('span'); t.textContent = e.message || 'Nie udało się uzyskać odpowiedzi.'; er.append(t);
       const r = document.createElement('button'); r.className = 'chip'; r.append(ico('refresh'), document.createTextNode('Spróbuj ponownie')); r.onclick = () => { row.remove(); runAssistant(); }; er.append(r); b.append(er);
     }
@@ -296,7 +296,7 @@ window.smiriAsk = (t) => { $('#input').value = t; $('#input').focus(); autosize(
 /* ---------- załączniki i tryby ---------- */
 function renderAttachments() {
   const el = $('#attachments'); el.innerHTML = '';
-  if (researchNext) { const c = document.createElement('span'); c.className = 'achip mode'; c.append(ico('globe'), document.createTextNode('Głębokie badanie')); const x = document.createElement('button'); x.setAttribute('aria-label', 'Wyłącz'); x.append(ico('close')); x.onclick = () => { researchNext = false; renderAttachments(); }; c.append(x); el.append(c); }
+  renderMode(); if (researchNext && !researchSticky) { const c = document.createElement('span'); c.className = 'achip mode'; c.append(ico('globe'), document.createTextNode('Głębokie badanie')); const x = document.createElement('button'); x.setAttribute('aria-label', 'Wyłącz'); x.append(ico('close')); x.onclick = () => { researchNext = false; renderAttachments(); }; c.append(x); el.append(c); }
   pending.forEach((f, i) => { const c = document.createElement('span'); c.className = 'achip'; c.append(ico('clip'), document.createTextNode(f.name)); const x = document.createElement('button'); x.setAttribute('aria-label', 'Usuń'); x.append(ico('close')); x.onclick = () => { pending.splice(i, 1); renderAttachments(); }; c.append(x); el.append(c); });
   updateSend();
 }
@@ -505,12 +505,12 @@ function applyTheme() { if (settings.theme === 'auto') document.documentElement.
 function openSettings() {
   $('#theme').value = settings.theme; $('#model').value = settings.model; $('#password').value = settings.password; $('#lang').value = settings.lang; $('#speak').checked = settings.speak;
   $('#effort').value = settings.effort; $('#showThink').checked = settings.showThinking; $('#style').value = settings.style; $('#aboutMe').value = settings.aboutMe; $('#howRespond').value = settings.howRespond; $('#memOn').checked = settings.memoryOn;
-  $('#fsize').value = settings.fsize; $('#haptics').checked = settings.haptics !== false; $('#convo').checked = !!settings.convo; renderSwatches();
+  $('#userNameIn').value = settings.name || ''; $('#fsize').value = settings.fsize; $('#haptics').checked = settings.haptics !== false; $('#convo').checked = !!settings.convo; renderSwatches();
   renderMemoryList(); if (!$('#settings').open) $('#settings').showModal();
 }
 $('#saveSettings').onclick = () => {
-  settings = Object.assign(settings, { theme: $('#theme').value, model: pickModel($('#model').value), password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked, effort: $('#effort').value, showThinking: $('#showThink').checked, style: $('#style').value, aboutMe: $('#aboutMe').value, howRespond: $('#howRespond').value, memoryOn: $('#memOn').checked, fsize: $('#fsize').value, haptics: $('#haptics').checked, convo: $('#convo').checked });
-  settings.themeSet = true; applyLook(); store.set('smiri.settings', settings); applyTheme();
+  settings = Object.assign(settings, { theme: $('#theme').value, model: pickModel($('#model').value), password: $('#password').value, lang: $('#lang').value, speak: $('#speak').checked, effort: $('#effort').value, showThinking: $('#showThink').checked, style: $('#style').value, aboutMe: $('#aboutMe').value, howRespond: $('#howRespond').value, memoryOn: $('#memOn').checked, fsize: $('#fsize').value, haptics: $('#haptics').checked, convo: $('#convo').checked, name: $('#userNameIn').value.trim().slice(0, 40) });
+  settings.themeSet = true; applyLook(); updateUser(); renderModel(); if (current && !current.messages.length) renderAll(); store.set('smiri.settings', settings); applyTheme();
 };
 $('#clearAll').onclick = () => { if (confirm('Usunąć całą historię rozmów?')) { chats = []; persist(); $('#settings').close(); newChat(); } };
 $('#clearMem').onclick = () => { if (confirm('Wyczyścić całą pamięć?')) { memories = []; saveMemory(); renderMemoryList(); } };
@@ -566,7 +566,7 @@ $('#newTop').onclick = () => newChat(false);
 $('#settingsBtn').onclick = () => { closeSidebar(); openSettings(); };
 $('#toolsBtn').onclick = () => { closeSidebar(); $('#launcher').showModal(); };
 $('#projBtn').onclick = () => { closeSidebar(); openProjects(); };
-$('#menuBtn').onclick = () => { $('#sidebar').classList.add('open'); document.body.classList.add('menu-open'); };
+$('#menuBtn').onclick = () => { if (document.body.classList.contains('sb-collapsed') && innerWidth > 820) { setCollapsed(false); return; } $('#sidebar').classList.add('open'); document.body.classList.add('menu-open'); };
 $('#sbClose').onclick = closeSidebar; $('#scrim').onclick = closeSidebar;
 $('#sendBtn').onclick = () => (busy ? stopGeneration() : send($('#input').value));
 $('#micBtn').onclick = openVoice; $('#voiceClose').onclick = closeVoice;
@@ -620,4 +620,33 @@ if (window.visualViewport) {
   visualViewport.addEventListener('resize', fit); fit();
 }
 
-hydrateIcons(); applyTheme(); applyLook(); renderPersonaSel(); renderSearchBtn(); newChat();
+/* ---------- układ jak w Claude: nawigacja, użytkownik, tryby, model ---------- */
+function setCollapsed(c) { document.body.classList.toggle('sb-collapsed', c); try { localStorage.setItem('smiri.sbc', c ? '1' : ''); } catch {} }
+if (localStorage.getItem('smiri.sbc')) document.body.classList.add('sb-collapsed');
+$('#sbCollapse').onclick = () => setCollapsed(true);
+$('#moreBtn').onclick = () => { const b = $('#moreBox'); b.hidden = !b.hidden; $('#moreBtn').setAttribute('aria-expanded', String(!b.hidden)); };
+$('#palBtn').onclick = openPalette; $('#palBtn2').onclick = () => { closeSidebar(); openPalette(); };
+$('#custBtn').onclick = () => { closeSidebar(); openSettings(); setTimeout(() => $('#secPersonal').scrollIntoView({ block: 'start', behavior: 'smooth' }), 80); };
+$('#userBtn').onclick = () => { closeSidebar(); openSettings(); setTimeout(() => { $('#secPersonal').scrollIntoView({ block: 'start' }); $('#userNameIn').focus({ preventScroll: true }); }, 80); };
+function updateUser() {
+  const n = settings.name.trim(); $('#userName').textContent = n || 'Gość';
+  $('#avatar').textContent = n ? n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() : 'G';
+}
+const EFFORT_L = { low: 'Szybko', medium: 'Średnio', high: 'Dokładnie' };
+function renderModel() { const l = $('#modelLbl'); l.textContent = ''; const b = document.createElement('b'); b.textContent = pickModel(settings.model) === 'claude-haiku-5-5' ? 'Haiku 5.5' : 'Sonnet 5.5'; const e = document.createElement('span'); e.className = 'eff'; e.textContent = ' · ' + (EFFORT_L[settings.effort] || 'Średnio'); l.append(b, e); }
+function saveSet() { store.set('smiri.settings', settings); renderModel(); }
+$('#modelBtn').onclick = (e) => {
+  e.stopPropagation(); if (openMenu.anchor === e.currentTarget && !$('#pop').hidden) return closeMenu();
+  openMenu(e.currentTarget, [
+    { header: 'Model' },
+    { icon: 'spark', label: 'Sonnet 5.5', sub: 'Najlepszy na co dzień', sel: pickModel(settings.model) === 'claude-sonnet-5-5', fn: () => { settings.model = 'claude-sonnet-5-5'; saveSet(); } },
+    { icon: 'bulb', label: 'Haiku 5.5', sub: 'Najszybszy i najtańszy', sel: pickModel(settings.model) === 'claude-haiku-5-5', fn: () => { settings.model = 'claude-haiku-5-5'; saveSet(); } },
+    'sep', { header: 'Głębokość myślenia' },
+    ...[['low', 'Szybko', 'Krótkie, natychmiastowe odpowiedzi'], ['medium', 'Średnio', 'Dobry balans'], ['high', 'Dokładnie', 'Więcej namysłu przy trudnych pytaniach']].map(([k, l, d]) => ({ icon: 'sliders', label: l, sub: d, sel: settings.effort === k, fn: () => { settings.effort = k; saveSet(); } })),
+    'sep', { icon: 'bulb', label: 'Pokazuj tok rozumowania', check: settings.showThinking, keep: true, fn: () => { settings.showThinking = !settings.showThinking; saveSet(); closeMenu(); } },
+  ], { up: true, alignRight: true });
+};
+function renderMode() { document.querySelectorAll('#modeSeg button').forEach((b) => b.classList.toggle('on', (b.dataset.m === 'research') === (researchNext && researchSticky))); }
+document.querySelectorAll('#modeSeg button').forEach((b) => (b.onclick = () => { researchSticky = b.dataset.m === 'research'; researchNext = researchSticky; renderAttachments(); haptic(8); if (researchSticky) toast('Tryb badania: Smiri wyszuka wiele źródeł i przygotuje raport'); }));
+
+hydrateIcons(); applyTheme(); applyLook(); updateUser(); renderModel(); renderPersonaSel(); renderSearchBtn(); newChat();

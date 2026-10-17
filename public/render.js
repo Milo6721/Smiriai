@@ -131,8 +131,8 @@ function msgEl(m, mi, final) {
     mk('edit', 'Edytuj', () => startEdit(row, m, mi));
     col.append(b, a); row.append(col); return row;
   }
-  const av = document.createElement('div'); av.className = 'av'; const b = document.createElement('div'); b.className = 'body';
-  row.append(av, b); fillAi(row, m, final); return row;
+  const av = document.createElement('div'); av.className = 'av'; const col = document.createElement('div'); col.className = 'acol'; const b = document.createElement('div'); b.className = 'body';
+  col.append(b); row.append(av, col); fillAi(row, m, final); return row;
 }
 
 function fillAi(row, m, final) {
@@ -148,6 +148,7 @@ function fillAi(row, m, final) {
   body.querySelectorAll('[data-a]').forEach((h, i) => artCard(h, P.arts[+h.dataset.a], mi, +h.dataset.a, final));
   body.querySelectorAll('.tl-item,.card,.slide,.wx>div').forEach((e, i) => e.style.setProperty('--i', i));
   enhanceCode(body, final);
+  if (!final && row.classList.contains('streaming')) setStatus(row, statusFor(m)); else setStatus(row, null);
   if (final && !m.noActions) {
     if (P.memory.length && !m._mem && typeof applyMemory === 'function') { m._mem = true; applyMemory(P.memory); }
     if (m.sources?.length) {
@@ -287,4 +288,22 @@ function renderArtPanel() {
     bar.append(b); body.append(bar);
   }
   P.append(head, body);
+}
+
+/* ---------- pasek stanu podczas pracy (fale + połyskujący tekst) ---------- */
+function statusFor(m) {
+  const t = (m.content || '').replace(RE_ART, '').replace(RE_W, '');
+  if (RE_ART_OPEN.test(t)) return 'Tworzę artefakt…';
+  const w = t.match(RE_W_OPEN);
+  if (w) { const k = (w[0].match(/```(\w+)/) || [])[1]; return ({ chart: 'Rysuję wykres…', mermaid: 'Rysuję schemat…', timeline: 'Buduję oś czasu…', flashcards: 'Tworzę fiszki…', slides: 'Przygotowuję prezentację…', currency: 'Sprawdzam kurs…', weather: 'Sprawdzam pogodę…', stock: 'Pobieram notowania…', map: 'Szukam miejsca…' })[k] || 'Przygotowuję…'; }
+  if ((t.match(/```/g) || []).length % 2 === 1) return 'Piszę kod…';
+  if (!m.content) return m.thinking ? 'Myślę…' : (m.sources && m.sources.length ? 'Czytam źródła…' : 'Myślę…');
+  return 'Piszę…';
+}
+function setStatus(row, text) {
+  const col = row.querySelector('.acol'); if (!col) return;
+  let st = col.querySelector(':scope > .status');
+  if (!text) { if (st) st.remove(); return; }
+  if (!st) { st = document.createElement('div'); st.className = 'status'; st.innerHTML = '<span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span class="gl"></span>'; col.append(st); }
+  const g = st.querySelector('.gl'); if (g.textContent !== text) g.textContent = text;
 }

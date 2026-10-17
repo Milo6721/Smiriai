@@ -27,20 +27,33 @@
 </head>
 <body>
 <div id="bgfx" aria-hidden="true"><i></i><i></i><i></i></div>
+<div id="edgeGlow" aria-hidden="true"></div>
 <div class="app">
   <aside id="sidebar">
     <div class="sb-top">
       <div class="brand"><span class="orb mini"></span><b>smiri</b></div>
       <button id="sbClose" class="icon only-mobile" aria-label="Zamknij"><i data-ic="close"></i></button>
+      <button id="sbCollapse" class="icon only-desktop" aria-label="Zwiń pasek boczny" title="Zwiń pasek boczny"><i data-ic="panel"></i></button>
     </div>
     <button id="newChat" class="btn-new"><i data-ic="plus"></i>Nowy czat</button>
-    <button id="tempChat" class="row-btn"><i data-ic="hourglass"></i>Czat tymczasowy</button>
-    <button id="toolsBtn" class="row-btn"><i data-ic="grid"></i>Narzędzia</button>
-    <button id="projBtn" class="row-btn"><i data-ic="folder"></i>Projekty</button>
+    <nav class="side-nav">
+      <button id="projBtn" class="row-btn"><i data-ic="folder"></i>Projekty</button>
+      <button id="artLibBtn" class="row-btn"><i data-ic="layers"></i>Artefakty</button>
+      <button id="schedBtn" class="row-btn"><i data-ic="clock"></i>Zaplanowane</button>
+      <button id="custBtn" class="row-btn"><i data-ic="user"></i>Dostosuj</button>
+      <button id="moreBtn" class="row-btn more-row" aria-expanded="false"><i data-ic="chevron"></i>Więcej</button>
+      <div id="moreBox" hidden>
+        <button id="toolsBtn" class="row-btn sub"><i data-ic="grid"></i>Narzędzia</button>
+        <button id="tempChat" class="row-btn sub"><i data-ic="hourglass"></i>Czat tymczasowy</button>
+        <button id="palBtn2" class="row-btn sub"><i data-ic="command"></i>Paleta poleceń</button>
+      </div>
+    </nav>
     <div class="search-box"><i data-ic="search"></i><input id="chatSearch" type="search" placeholder="Szukaj w rozmowach" autocomplete="off"></div>
     <div id="chatList"></div>
-    <div class="side-foot">
-      <button id="settingsBtn" class="row-btn"><i data-ic="sliders"></i>Ustawienia</button>
+    <div class="side-foot userbar">
+      <button id="userBtn" class="user-row"><span class="avatar" id="avatar">G</span><span id="userName">Gość</span></button>
+      <button id="settingsBtn" class="icon" aria-label="Ustawienia" title="Ustawienia"><i data-ic="sliders"></i></button>
+      <button id="palBtn" class="icon" aria-label="Szukaj i polecenia" title="Szukaj (Ctrl/⌘ K)"><i data-ic="search"></i></button>
     </div>
   </aside>
 
@@ -62,17 +75,24 @@
     <div id="composer">
       <div id="attachments"></div>
       <div class="box">
-        <button id="plusBtn" class="cbtn" aria-label="Dodaj"><i data-ic="plus"></i></button>
+        <textarea id="input" rows="1" placeholder="Zapytaj Smiri o cokolwiek" enterkeyhint="send"></textarea>
         <input id="file" type="file" multiple hidden accept="image/*,application/pdf,.txt,.md,.csv,.json,.js,.py,.html,.css">
         <input id="fileCam" type="file" hidden accept="image/*" capture="environment">
-        <textarea id="input" rows="1" placeholder="Zapytaj Smiri o cokolwiek" enterkeyhint="send"></textarea>
-        <button id="micBtn" class="cbtn" aria-label="Mów"><i data-ic="mic"></i></button>
-        <button id="sendBtn" class="send" aria-label="Wyślij"><i data-ic="up"></i></button>
+        <div class="box-row">
+          <button id="plusBtn" class="cbtn" aria-label="Dodaj"><i data-ic="plus"></i></button>
+          <div class="seg mode" id="modeSeg"><button type="button" data-m="chat" class="on">Czat</button><button type="button" data-m="research">Badanie</button></div>
+          <span class="grow"></span>
+          <button id="modelBtn" class="model-btn" aria-haspopup="true"><span id="modelLbl">Sonnet 5.5</span><i data-ic="chevron"></i></button>
+          <button id="dictBtn" class="cbtn" aria-label="Dyktowanie" title="Dyktowanie"><i data-ic="mic"></i></button>
+          <button id="micBtn" class="cbtn" aria-label="Rozmowa głosowa" title="Rozmowa głosowa"><i data-ic="wave"></i></button>
+          <button id="sendBtn" class="send" aria-label="Wyślij"><i data-ic="up"></i></button>
+        </div>
       </div>
       <small class="hint">Smiri może się mylić. Sprawdzaj ważne informacje.</small>
     </div>
   </main>
   <aside id="artPanel" hidden></aside>
+  <div id="waves" aria-hidden="true"></div>
   <div id="scrim"></div>
 </div>
 
@@ -109,7 +129,8 @@
     <label class="switch-row"><span>Pokazuj tok rozumowania<small>Podgląd tego, jak Smiri myśli</small></span><input id="showThink" type="checkbox" class="switch"></label>
     <div class="field"><label for="style">Styl odpowiedzi</label>
       <select id="style"><option value="default">Domyślny</option><option value="concise">Zwięzły</option><option value="explain">Wyjaśniający</option><option value="formal">Formalny</option><option value="casual">Luźny</option></select></div>
-    <h3 class="sec">Personalizacja</h3>
+    <h3 class="sec" id="secPersonal">Personalizacja</h3>
+    <div class="field"><label for="userNameIn">Twoje imię</label><input id="userNameIn" type="text" placeholder="Jak mam się do Ciebie zwracać?" autocomplete="off"></div>
     <div class="field"><label for="aboutMe">Co Smiri powinien o Tobie wiedzieć?</label><textarea id="aboutMe" rows="3" placeholder="Np. Jestem programistą z Krakowa, uczę się hiszpańskiego."></textarea></div>
     <div class="field"><label for="howRespond">Jak ma odpowiadać?</label><textarea id="howRespond" rows="3" placeholder="Np. Odpowiadaj krótko, z przykładami kodu w TypeScript."></textarea></div>
     <label class="switch-row"><span>Pamięć między rozmowami<small>Smiri zapamiętuje trwałe fakty o Tobie</small></span><input id="memOn" type="checkbox" class="switch"></label>
@@ -135,6 +156,18 @@
       <button id="saveSettings" value="ok" class="btn-primary">Gotowe</button>
     </div>
   </form>
+</dialog>
+
+<!-- biblioteka artefaktów -->
+<dialog id="artlib" class="sheet big">
+  <div class="sheet-head"><h2>Artefakty</h2><button class="icon" data-close aria-label="Zamknij"><i data-ic="close"></i></button></div>
+  <div id="artlibBody"></div>
+</dialog>
+
+<!-- zadania zaplanowane -->
+<dialog id="sched" class="sheet big">
+  <div class="sheet-head"><h2>Zaplanowane</h2><button class="icon" data-close aria-label="Zamknij"><i data-ic="close"></i></button></div>
+  <div id="schedBody"></div>
 </dialog>
 
 <!-- projekty -->
@@ -175,5 +208,6 @@
 <script src="render.js"></script>
 <script src="app.js"></script>
 <script src="extras.js"></script>
+<script src="extras2.js"></script>
 </body>
 </html>

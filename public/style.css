@@ -665,3 +665,88 @@ header{background:linear-gradient(to bottom,color-mix(in srgb,var(--bg) 96%,tran
   body.art-open #scrim{position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;transition:opacity .35s var(--ease)}
   body.art-open.menu-open #scrim{opacity:1;pointer-events:auto}
 }
+
+/* ===== v0.7: układ jak w Claude + poświata Siri/Gemini ===== */
+@property --ang{syntax:"<angle>";inherits:false;initial-value:0deg}
+:root{--g1:#64d2ff;--g2:#7d7aff;--g3:#bf5af2;--g4:#ff6fb5;--glow:conic-gradient(from var(--ang),var(--g1),var(--g2),var(--g3),var(--g4),var(--g3),var(--g2),var(--g1))}
+@keyframes ang{to{--ang:360deg}}
+@keyframes shim{to{background-position:-200% 0}}
+@keyframes wbar{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+@keyframes wvmove{to{transform:translateX(-50%)}}
+@keyframes edgeIn{from{opacity:0}to{opacity:1}}
+
+/* sidebar */
+.side-nav{display:flex;flex-direction:column;gap:1px;margin:2px 0 4px}
+.side-nav .row-btn{padding:8px 12px;font-size:14.5px;color:var(--text)}
+.row-btn.sub{padding-left:22px;font-size:14px;color:var(--muted)}
+#moreBox{display:flex;flex-direction:column;overflow:hidden;animation:rise .35s var(--ease) both}
+#moreBox[hidden]{display:none}
+.more-row .ico{color:var(--faint);transition:transform .3s var(--spring)}
+.more-row[aria-expanded="true"] .ico{transform:rotate(180deg)}
+.sb-top .icon{width:32px;height:32px}
+.userbar{display:flex;align-items:center;gap:4px}
+.user-row{flex:1;display:flex;align-items:center;gap:10px;min-width:0;padding:6px 8px;border-radius:12px;text-align:left;font-weight:500;transition:background .2s}
+.user-row:hover{background:var(--fill)}
+.user-row span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.avatar{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--grad);color:#fff;font-weight:700;font-size:13px}
+.only-desktop{display:inline-grid}
+body.sb-collapsed #sidebar{display:none}
+body.sb-collapsed #menuBtn{display:inline-grid}
+@media (max-width:820px){.only-desktop{display:none!important}.only-mobile{display:inline-grid}}
+
+/* biblioteka i zadania */
+.task-form{margin-top:18px;padding-top:6px;border-top:1px solid var(--line)}
+.task-form h3{font-size:15px;margin:12px 0 4px}
+.task-form .bar2{display:flex;gap:10px;flex-wrap:wrap}.task-form .bar2 .field{flex:1;min-width:130px}
+.task-form .btn-primary{margin-top:6px;width:100%}
+.nx{font-size:12px!important;margin-top:2px}
+.search-box.lib{margin:0 0 8px}
+
+/* pole pisania: dwa wiersze */
+.box{flex-direction:column;align-items:stretch;gap:2px;padding:10px 10px 8px 14px}
+.box #input{width:100%;padding:6px 4px 4px;max-height:180px}
+.box-row{display:flex;align-items:center;gap:4px}
+.box-row .grow{flex:1}
+.cbtn.on{color:#fff;background:var(--grad);animation:pulse 1.4s ease-in-out infinite}
+.model-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 8px 6px 12px;border-radius:99px;font-size:13px;color:var(--muted);transition:background .2s,color .2s}
+.model-btn:hover{background:var(--fill);color:var(--text)}
+.model-btn .eff{color:var(--faint)}.model-btn .ico{width:14px;height:14px}
+.seg.mode button{padding:4px 11px;font-size:12.5px}
+@media (max-width:520px){.model-btn .eff{display:none}.seg.mode button{padding:4px 9px}}
+
+/* status „Smiri pracuje” z falami */
+.msg.ai .acol{flex:1;min-width:0}
+.msg.ai .status{display:inline-flex;align-items:center;gap:10px;margin:2px 0 8px;padding:6px 14px 6px 12px;border-radius:99px;font-size:13.5px;font-weight:500;background:var(--fill);animation:pop .4s var(--spring) both}
+.status .wave{display:inline-flex;align-items:center;gap:2px;height:16px}
+.status .wave i{display:block;width:3px;height:100%;border-radius:3px;background:linear-gradient(var(--g1),var(--g3),var(--g4));transform-origin:center;animation:wbar 1s ease-in-out infinite}
+.status .wave i:nth-child(2){animation-delay:.12s}.status .wave i:nth-child(3){animation-delay:.24s}.status .wave i:nth-child(4){animation-delay:.36s}.status .wave i:nth-child(5){animation-delay:.48s}
+.status .gl{background:linear-gradient(90deg,var(--muted) 20%,var(--g2) 40%,var(--g4) 50%,var(--g1) 60%,var(--muted) 80%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;animation:shim 2.2s linear infinite}
+.msg.streaming .body>*:last-child::after{content:none!important;display:none!important}
+
+/* poświata na krawędziach ekranu (Siri) */
+#edgeGlow{position:fixed;inset:0;z-index:40;pointer-events:none;opacity:0;transition:opacity .7s var(--ease);
+  --ang:0deg;padding:3px;background:var(--glow);animation:ang 5s linear infinite;
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);
+  filter:blur(7px) saturate(1.3);border-radius:0}
+#edgeGlow::after{content:"";position:absolute;inset:0}
+body.working #edgeGlow{opacity:.85}
+@media (max-width:820px){#edgeGlow{padding:2px;border-radius:38px;filter:blur(5px) saturate(1.3)}}
+
+/* tęczowa obwódka pola pisania i pulsujący avatar */
+.box{position:relative}
+.box::before{content:"";position:absolute;inset:-2px;border-radius:inherit;padding:2px;background:var(--glow);--ang:0deg;opacity:0;pointer-events:none;transition:opacity .6s var(--ease);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);animation:ang 3.5s linear infinite}
+body.working .box::before{opacity:1}
+body.working .box{box-shadow:var(--lg-shadow),0 0 38px -4px rgba(125,122,255,.5),0 0 70px -10px rgba(255,111,181,.35)}
+.msg.ai.streaming .av{animation:spin 1.4s linear infinite,pulse 1.2s ease-in-out infinite;box-shadow:0 0 20px rgba(191,90,242,.7)}
+
+/* fale u dołu ekranu */
+#waves{position:fixed;left:0;right:0;bottom:0;height:130px;z-index:1;pointer-events:none;opacity:0;transition:opacity .8s var(--ease);overflow:hidden;
+  -webkit-mask:linear-gradient(transparent,#000 70%);mask:linear-gradient(transparent,#000 70%)}
+body.working #waves{opacity:.55}
+#waves .wv{position:absolute;left:0;bottom:0;width:200%;height:100%;animation:wvmove linear infinite;filter:blur(1px)}
+@media (prefers-reduced-motion:reduce){#edgeGlow,.box::before,#waves .wv,.status .gl,.status .wave i{animation:none}}
+.model-btn{white-space:nowrap;flex:none}.box-row>*{flex:none}.box-row .grow{flex:1 1 0;min-width:0}
+#edgeGlow{padding:5px;filter:blur(9px) saturate(1.4)}body.working #edgeGlow{opacity:1}
+@media (max-width:520px){.model-btn .ico{display:none}.model-btn{padding:6px 8px}.box-row{gap:2px}.cbtn{width:34px;height:34px}.seg.mode button{padding:4px 8px}}
+@media (max-width:820px){#edgeGlow{padding:4px}}
