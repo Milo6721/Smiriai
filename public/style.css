@@ -750,3 +750,29 @@ body.working #waves{opacity:.55}
 #edgeGlow{padding:5px;filter:blur(9px) saturate(1.4)}body.working #edgeGlow{opacity:1}
 @media (max-width:520px){.model-btn .ico{display:none}.model-btn{padding:6px 8px}.box-row{gap:2px}.cbtn{width:34px;height:34px}.seg.mode button{padding:4px 8px}}
 @media (max-width:820px){#edgeGlow{padding:4px}}
+
+/* panel generowania (jak przy obrazach w ChatGPT, w kolorach Smiri) */
+@keyframes b1{0%,100%{transform:translate(-10%,-10%) scale(1)}50%{transform:translate(55%,20%) scale(1.25)}}
+@keyframes b2{0%,100%{transform:translate(70%,-5%) scale(1.1)}50%{transform:translate(10%,40%) scale(.9)}}
+@keyframes b3{0%,100%{transform:translate(20%,60%) scale(1)}50%{transform:translate(75%,30%) scale(1.3)}}
+@keyframes b4{0%,100%{transform:translate(50%,10%) scale(.9)}50%{transform:translate(-5%,50%) scale(1.2)}}
+@keyframes swp{from{transform:translateX(-120%) skewX(-18deg)}to{transform:translateX(320%) skewX(-18deg)}}
+@keyframes gwv{to{transform:translateX(-50%)}}
+@keyframes breathe{0%,100%{opacity:.75}50%{opacity:1}}
+.gen{position:relative;overflow:hidden;isolation:isolate;height:190px;margin:10px 0 6px;border-radius:24px;border:1px solid var(--lg-edge,var(--line));background:#0c0b1a;box-shadow:0 18px 50px -18px rgba(125,122,255,.55),inset 0 1px 0 rgba(255,255,255,.12);animation:pop .5s var(--spring) both;transition:opacity .4s var(--ease),transform .4s var(--ease)}
+.gen.out{opacity:0;transform:scale(.97)}
+.gen .blobs{position:absolute;inset:0;filter:blur(34px) saturate(1.4)}
+.gen .blobs i{position:absolute;width:55%;height:75%;border-radius:50%;left:0;top:0;will-change:transform}
+.gen .blobs i:nth-child(1){background:#64d2ff;animation:b1 7s ease-in-out infinite}
+.gen .blobs i:nth-child(2){background:#7d7aff;animation:b2 9s ease-in-out infinite}
+.gen .blobs i:nth-child(3){background:#bf5af2;animation:b3 8s ease-in-out infinite}
+.gen .blobs i:nth-child(4){background:#ff6fb5;width:40%;animation:b4 10s ease-in-out infinite}
+.gen .sweep{position:absolute;top:-20%;bottom:-20%;width:28%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent);animation:swp 2.8s ease-in-out infinite;z-index:1}
+.gen .gw{position:absolute;left:0;bottom:0;width:200%;height:56%;z-index:1}
+.gen .gw path{fill:rgba(255,255,255,.16)}
+.gen .gw .w1{animation:gwv 6s linear infinite}.gen .gw .w2{fill:rgba(255,255,255,.1);animation:gwv 9s linear infinite reverse}
+.gen .gt{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#fff;text-shadow:0 1px 14px rgba(0,0,0,.45);animation:breathe 2.6s ease-in-out infinite}
+.gen .gt .gl{font-size:17px;font-weight:600;letter-spacing:-.02em;background:none;-webkit-text-fill-color:#fff;color:#fff;animation:none}
+.gen .gt small{font-size:12.5px;opacity:.8}
+.msg.streaming .body>*:last-child::after{content:none!important}
+@media (prefers-reduced-motion:reduce){.gen *{animation:none!important}}

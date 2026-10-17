@@ -106,7 +106,7 @@ function parseArt(raw) {
 function parseMessage(text, final) {
   const out = { md: text, arts: [], widgets: [], followups: [], memory: [] };
   out.md = out.md.replace(RE_ART, (_, raw) => { out.arts.push(parseArt(raw)); return `\n\n<div data-a="${out.arts.length - 1}"></div>\n\n`; });
-  out.md = out.md.replace(RE_ART_OPEN, (all) => { const t = all.match(/"title"\s*:\s*"([^"]*)"/); out.arts.push({ creating: true, title: t ? t[1] : 'Artefakt', type: ((all.match(/"type"\s*:\s*"([^"]*)"/) || [])[1]) || 'html', body: '' }); return `\n\n<div data-a="${out.arts.length - 1}"></div>\n\n`; });
+  out.md = out.md.replace(RE_ART_OPEN, (all) => { const t = all.match(/"title"\s*:\s*"([^"]*)"/); out.arts.push({ creating: true, title: t ? t[1] : 'Artefakt', type: ((all.match(/"type"\s*:\s*"([^"]*)"/) || [])[1]) || 'html', body: '' }); return '\n\n'; });
   out.md = out.md.replace(RE_W, (_, type, code) => {
     if (type === 'followups') { try { out.followups = JSON.parse(code).filter((s) => typeof s === 'string').slice(0, 4); } catch {} return ''; }
     if (type === 'memory') { try { const d = JSON.parse(code); if (d.add) out.memory.push(String(d.add)); } catch {} return ''; }
@@ -116,7 +116,7 @@ function parseMessage(text, final) {
   out.md = out.md.replace(RE_W_OPEN, DRAW);
   return out;
 }
-const DRAW = '\n\n<div class="drawing"><span></span><span></span><span></span><span></span></div>\n\n';
+const DRAW = '\n\n';
 
 /* ---------- wiadomości ---------- */
 function msgEl(m, mi, final) {
@@ -148,7 +148,7 @@ function fillAi(row, m, final) {
   body.querySelectorAll('[data-a]').forEach((h, i) => artCard(h, P.arts[+h.dataset.a], mi, +h.dataset.a, final));
   body.querySelectorAll('.tl-item,.card,.slide,.wx>div').forEach((e, i) => e.style.setProperty('--i', i));
   enhanceCode(body, final);
-  if (!final && row.classList.contains('streaming')) setStatus(row, statusFor(m)); else setStatus(row, null);
+  if (!final && row.classList.contains('streaming')) { const st = statusFor(m), mk = /^(Tworzę artefakt|Rysuję|Buduję|Tworzę fiszki|Przygotowuję|Piszę kod)/.test(st); setGen(row, mk ? st : null); setStatus(row, mk ? null : st); } else { setGen(row, null); setStatus(row, null); }
   if (final && !m.noActions) {
     if (P.memory.length && !m._mem && typeof applyMemory === 'function') { m._mem = true; applyMemory(P.memory); }
     if (m.sources?.length) {
@@ -306,4 +306,17 @@ function setStatus(row, text) {
   if (!text) { if (st) st.remove(); return; }
   if (!st) { st = document.createElement('div'); st.className = 'status'; st.innerHTML = '<span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span class="gl"></span>'; col.append(st); }
   const g = st.querySelector('.gl'); if (g.textContent !== text) g.textContent = text;
+}
+
+/* panel „Smiri tworzy…”: jeden trwały element, więc animacja nie miga przy kolejnych fragmentach odpowiedzi */
+function setGen(row, text) {
+  const col = row.querySelector('.acol'); if (!col) return;
+  let g = col.querySelector(':scope > .gen');
+  if (!text) { if (g) { g.classList.add('out'); setTimeout(() => g.remove(), 400); } return; }
+  if (!g) {
+    g = document.createElement('div'); g.className = 'gen';
+    g.innerHTML = '<div class="blobs"><i></i><i></i><i></i><i></i></div><div class="sweep"></div><svg class="gw" viewBox="0 0 800 120" preserveAspectRatio="none"><path class="w1" d="M0 70 Q100 30 200 70 T400 70 T600 70 T800 70 V120 H0Z"/><path class="w2" d="M0 85 Q100 55 200 85 T400 85 T600 85 T800 85 V120 H0Z"/></svg><div class="gt"><span class="gl"></span><small>To potrwa chwilę</small></div>';
+    col.append(g);
+  } else g.classList.remove('out');
+  const l = g.querySelector('.gl'); if (l.textContent !== text) l.textContent = text;
 }
